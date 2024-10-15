@@ -1,8 +1,9 @@
-Maven
+Maven and Java
 =================================================================================
 sudo apt update
 sudo apt upgrade -y
 sudo apt install tree -y
+sudo apt install unzip -y
 sudo apt install fontconfig openjdk-17-jre -y
 sudo find / -name java
 sudo vi /etc/profile
@@ -17,3 +18,41 @@ export PATH
 sudo su -
 source /etc/environment
 echo $JAVA_HOME
+
+sudo su -
+cd /opt
+wget https://dlcdn.apache.org/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz
+tar -xvzf apache-maven-3.9.9-bin.tar.gz 
+ls
+mv apache-maven-3.9.9 maven
+rm apache-maven-3.9.9-bin.tar.gz 
+cd maven
+mvn --version
+
+Jenkins Installation
+==================================================================================================
+sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
+  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]" \
+  https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+  /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt-get update
+sudo apt-get install jenkins -y
+systemctl status jenkins
+
+
+SonarQube
+========================================================================================================
+Create SonarQube User:
+useradd -m sonar
+Download and Install SonarQube:
+cd /opt
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.6.0.92116.zip
+unzip sonarqube-10.6.0.92116.zip
+chown -R sonar:sonar sonarqube-10.6.0.92116
+su - sonar
+cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
+./sonar.sh
+./sonar.sh start
+Access SonarQube: Open http://<Public_IP>:9000 in your browser. Default login is admin/admin.
+
