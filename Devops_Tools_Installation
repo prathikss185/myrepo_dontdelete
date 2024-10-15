@@ -26,7 +26,7 @@ tar -xvzf apache-maven-3.9.9-bin.tar.gz
 ls
 mv apache-maven-3.9.9 maven
 rm apache-maven-3.9.9-bin.tar.gz 
-cd maven
+cd maven   ##### exit from root and try to sudo su - and try for versiosn####
 mvn --version
 
 Jenkins Installation
