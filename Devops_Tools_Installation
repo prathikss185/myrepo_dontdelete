@@ -70,6 +70,22 @@ cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
 ./sonar.sh status
 Access SonarQube: Open http://<Public_IP>:9000 in your browser. Default login is admin/admin.
 
+Docker and awscli
+========================================================================================================
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo usermod -aG docker jenkins
+sudo systemctl restart docker
+docker --version
+sudo chmod 666 /var/run/docker.sock
+sudo apt install unzip
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+
+
 
 =======================================================================================================
 =======================================================================================================
@@ -77,6 +93,7 @@ cd /home/ubuntu
 sudo apt-get install putty-tools -y
 puttygen ppkkey.ppk -O private-openssh -o pemkey.pem
 ssh-keygen -y -f Projectkey1.pem > Projectkey1.pub
+
 
 
 
