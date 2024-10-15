@@ -1,0 +1,19 @@
+Maven
+=================================================================================
+sudo apt update
+sudo apt upgrade -y
+sudo apt install tree -y
+sudo apt install fontconfig openjdk-17-jre -y
+sudo find / -name java
+sudo vi /etc/profile
+### go to the end of the file and add below lines.
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+M2_HOME=/opt/maven
+PATH=$PATH:$HOME/bin:$JAVA_HOME/bin:$M2_HOME/bin
+export JAVA_HOME
+export M2_HOME
+export PATH
+
+sudo su -
+source /etc/environment
+echo $JAVA_HOME
