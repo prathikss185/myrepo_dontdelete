@@ -4,6 +4,7 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt install tree -y
 sudo apt install unzip -y
+sudo apt-get install putty-tools -y
 sudo apt install fontconfig openjdk-17-jre -y
 sudo find / -name java
 sudo vi /etc/profile
