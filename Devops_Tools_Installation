@@ -55,5 +55,6 @@ su - sonar
 cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
 ./sonar.sh
 ./sonar.sh start
+./sonar.sh status
 Access SonarQube: Open http://<Public_IP>:9000 in your browser. Default login is admin/admin.
 
