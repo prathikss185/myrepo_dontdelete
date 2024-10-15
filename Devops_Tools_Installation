@@ -70,3 +70,14 @@ cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
 ./sonar.sh status
 Access SonarQube: Open http://<Public_IP>:9000 in your browser. Default login is admin/admin.
 
+
+=======================================================================================================
+=======================================================================================================
+cd /home/ubuntu
+sudo apt-get install putty-tools -y
+puttygen ppkkey.ppk -O private-openssh -o pemkey.pem
+ssh-keygen -y -f Projectkey1.pem > Projectkey1.pub
+
+
+
+
