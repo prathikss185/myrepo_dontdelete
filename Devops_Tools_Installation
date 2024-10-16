@@ -96,7 +96,8 @@ cd app/bin
 ./artifactory.sh start
 # BROWSE - http://<Public_IP>:8082
 # Username/Password - admin/password
-
+# BROWSE - http://<Public_IP>:8082
+# Username/Password - admin/password
 
 jfrog
 =======================================================================================================
