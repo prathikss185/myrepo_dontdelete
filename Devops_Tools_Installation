@@ -98,6 +98,14 @@ cd app/bin
 # Username/Password - admin/password
 
 
+jfrog
+=======================================================================================================
+cd /opt/
+sudo wget https://releases.jfrog.io/artifactory/bintray-artifactory/org/artifactory/oss/jfrog-artifactory-oss/7.90.8/jfrog-artifactory-oss-7.90.8-linux.tar.gz
+sudo tar -xvzf jfrog-artifactory-oss-7.90.8-linux.tar.gz
+cd /artifactory-oss-7.90.8/app/bin
+./artifactory.sh start
+
 
 =======================================================================================================
 =======================================================================================================
