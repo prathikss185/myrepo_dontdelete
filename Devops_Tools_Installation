@@ -108,6 +108,11 @@ cd /artifactory-oss-7.90.8/app/bin
 ./artifactory.sh start
 
 
+Kubectl on jenkin server
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+chmod +x kubectl
+cp kubectl /usr/local/bin/
+
 =======================================================================================================
 =======================================================================================================
 cd /home/ubuntu
