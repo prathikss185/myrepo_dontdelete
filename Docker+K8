@@ -1,0 +1,4425 @@
+
+docker run -d —memory=“256m” redis
+docker run -d —cups=“.5” redis 
+
+
+docker image inspect <image_name> — to check the image
+docker inspect <container_id>
+
+docker stats — to check the statistics of all containers
+docker stats <container_id>.  — to check the statistics of a particular container
+
+docker system prune -a  —removes all unused containers and images.
+
+Create a custom image from the container;
+
+Commit the changes to create a new image:
+docker commit <container-id> customer-image
+
+Build a new container from the customer image:
+docker run -it —name my-custom-container my-custom-ubuntu-image
+
+Push docker images to Dockerhub
+
+docker images ls
+docker tag image orgname/image
+docker push orgname/image
+
+
+
+Kubernetes 
+Masternode:
+	•	Api Server : Entry point for the cluster, responsible for orchestrating all components within cluster.
+	•	key value store -etcd : Database, containers and pods information
+	•	controllers : 
+	⁃	Node Controllers: Take care of Nodes | responsible for onboarding new nodes in a cluster | Availability of nodes.
+	⁃	Replicas Controller: Ensures that the desired number of containers are running at all times.
+	⁃	Controller Manager: Manages all these controllers in place.
+	•	scheduler : Identify the right node to place containers.
+Workernode:
+	•	kubelet: Agent which runs on each node of the cluster. Manages all the actions. Let Api Server know about the readiness to join. Sending reports back to master about the status of the containers.
+	•	container runtime (docker)
+	•	Network Proxy (kube-proxy): Communication between worker nodes.
+	•	Pods
+
+Kubernetes installation:
+Below script to be run on master and worker nodes. 
+Kubeadm init and wave network installation only on master node.
+
+Kubeadm_install.sh
+
+#!/bin/bash
+# common.sh
+# copy this script and run in all master and worker nodes
+#i1) Switch to root user [ sudo -i]
+
+#2) Disable swap & add kernel settings
+
+swapoff -a
+sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+
+
+#3) Add  kernel settings & Enable IP tables(CNI Prerequisites)
+
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+modprobe overlay
+modprobe br_netfilter
+
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables  = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward                 = 1
+EOF
+
+sysctl --system
+
+#4) Install containerd run time
+
+#To install containerd, first install its dependencies.
+
+apt-get update -y
+apt-get install ca-certificates curl gnupg lsb-release -y
+
+#Note: We are not installing Docker Here.Since containerd.io package is part of docker apt repositories hence we added docker repository & it's key to download and install containerd.
+# Add Docker’s official GPG key:
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
+#Use follwing command to set up the repository:
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Install containerd
+
+apt-get update -y
+apt-get install containerd.io -y
+
+# Generate default configuration file for containerd
+
+#Note: Containerd uses a configuration file located in /etc/containerd/config.toml for specifying daemon level options.
+#The default configuration can be generated via below command.
+
+containerd config default > /etc/containerd/config.toml
+
+# Run following command to update configure cgroup as systemd for contianerd.
+
+sed -i 's/SystemdCgroup \= false/SystemdCgroup \= true/g' /etc/containerd/config.toml
+
+# Restart and enable containerd service
+
+systemctl restart containerd
+systemctl enable containerd
+
+#5) Installing kubeadm, kubelet and kubectl
+
+# Update the apt package index and install packages needed to use the Kubernetes apt repository:
+
+apt-get update
+apt-get install -y apt-transport-https ca-certificates curl
+
+# Download the Google Cloud public signing key:
+
+#curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.26/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.31/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+# Add the Kubernetes apt repository:
+
+#echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.26/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.31/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+# Update apt package index, install kubelet, kubeadm and kubectl, and pin their version:
+
+apt-get update
+apt-get install -y kubelet kubeadm kubectl
+
+# apt-mark hold will prevent the package from being automatically upgraded or removed.
+
+apt-mark hold kubelet kubeadm kubectl
+
+# Enable and start kubelet service
+
+systemctl daemon-reload
+systemctl start kubelet
+systemctl enable kubelet.service
+
+
+To make it run from any user:
+kubeadm init
+mkdir -p $HOME/.kube
+cp /etc/kubernetes/admin.conf $HOME/.kube/config
+export KUBECONFIG=$HOME/.kube/config
+kubectl get nodes
+
+Adding wave network to the Master node:
+kubectl apply -f https://github.com/weaveworks/weave/releases/download/v2.8.1/weave-daemonset-k8s.yaml
+
+Add the worker nodes to master node, run th
+kubeadm token create --print-join-command (run this on master node, and output of the command in the worker nodes. )
+kubeadm join 172.31.22.231:6443 --token 6cbi6a.2sufpcqm60hjnqyh --discovery-token-ca-cert-hash sha256:49771a9c190273c25ce040ca5a1e6bd9dd999064a4c28cac0aa8fc8b8e3ae084 (similar to this will get generated which needs to be run on all the worker nodes which are part of the current Kubernetes cluster.)
+
+To make crictl command line tool to work on worker node:
+Become root and run below command on the worker node:
+# crictl config --set runtime-endpoint=unix:///run/containerd/containerd.sock --set image-endpoint=unix:///run/containerd/containerd.sock
+
+root@k8w2:~# crictl config --set runtime-endpoint=unix:///run/containerd/containerd.sock --set image-endpoint=unix:///run/containerd/containerd.sock
+root@k8w2:~# crictl ps
+CONTAINER           IMAGE               CREATED             STATE               NAME                ATTEMPT             POD ID              POD
+ced1f5227670b       690c3345cc9c3       9 minutes ago       Running             weave-npc           0                   8bb17feec840c       weave-net-lhv8b
+360ef3cad391d       62fea85d60522       9 minutes ago       Running             weave               0                   8bb17feec840c       weave-net-lhv8b
+46d6ea221c354       ad83b2ca7b09e       9 minutes ago       Running             kube-proxy          0                   b575b3fa82f6d       kube-proxy-drvdb
+root@k8w2:~# 
+
+Few more commands on crictl:
+1. crictl inspect <container id> —> to verify any container issues
+2. crictl pull <docker image> —> to pull docker images
+3. crictl stop <container id>  —> to stop the running container
+4. crictl rm <container id> —> to remove the container
+
+NOTE: All the above commands works on worker nodes as a root user after setting the runtime and image endpoints.
+
+3 types of Kubernetes clusters
+
+1. Minikube
+2.  Kubeadm
+3. Managed clusters
+	1. EKS: Amazon Elastic Kubernetes Service
+	2. AKS: Azure Kubernetes Service
+	3. GKE: Google Kubernetes Engine
+
+YAML Basics:
+
+1. Key value pairs:
+Name: Ravi
+Age: 30
+is_student: false
+
+2. Lists
+Fruits:
+ - Apple
+ - Orange
+ - Mango
+
+3. Nested data:
+Name: Ravi
+Age: 30
+Address:
+ Street: Vijayanagara
+ Apt: Disha
+
+4. List of maps:
+employees:
+- name: Ravi
+  role: Devops Engineer
+  position: Sr Consultent
+- name: Prathik
+  role: Devops Engineer
+  position: Associate
+
+5. Multilines representation:
+Multiline: |
+ This is part of multiple lines
+ This is second line
+ This is third one
+
+6. Multiple yaml statements in a single file:
+test.yaml
+- - -
+apiversion: v1
+kind: pod
+
+
+- - - 
+apiversion: v1
+kind: deployment
+
+7. Boolean
+statement: true/false on/off 0/1
+
+To verify the yaml syntax we can use: www.yamllint.com 
+
+
+
+ubuntu@k8s:~$ cat myapp.yaml 
+apiVersion: v1
+kind: Pod
+metadata: 
+ name: my-pod
+ labels:
+  app: my-app
+spec:
+  containers:
+  - name: my-container
+    image: nginx:latest
+    ports: 
+    - containerPort: 80
+ubuntu@k8s:~$  
+
+$ kubectl apply -f myapp.yaml
+
+ubuntu@k8s:~$ kubectl get pods
+NAME     READY   STATUS    RESTARTS   AGE
+my-pod   1/1     Running   0          4m46s
+ubuntu@k8s:~$ 
+
+ubuntu@k8s:~$ kubectl describe pod my-pod
+Name:             my-pod
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             k8w2/172.31.28.251
+Start Time:       Tue, 10 Sep 2024 13:56:35 +0000
+Labels:           app=my-app
+Annotations:      <none>
+Status:           Running
+IP:               10.36.0.1
+IPs:
+  IP:  10.36.0.1
+Containers:
+  my-container:
+    Container ID:   containerd://65d5232c601c00f315abd42a982557456acbc3ea21e5a8dca35dc71cd45aab65
+    Image:          nginx:latest
+    Image ID:       docker.io/library/nginx@sha256:04ba374043ccd2fc5c593885c0eacddebabd5ca375f9323666f28dfd5a9710e3
+    Port:           80/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Tue, 10 Sep 2024 13:56:38 +0000
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-x9kmg (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-x9kmg:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age    From               Message
+  ----    ------     ----   ----               -------
+  Normal  Scheduled  5m29s  default-scheduler  Successfully assigned default/my-pod to k8w2
+  Normal  Pulling    5m29s  kubelet            Pulling image "nginx:latest"
+  Normal  Pulled     5m26s  kubelet            Successfully pulled image "nginx:latest" in 3.22s (3.22s including waiting). Image size: 71027698 bytes.
+  Normal  Created    5m26s  kubelet            Created container my-container
+  Normal  Started    5m25s  kubelet            Started container my-container
+ubuntu@k8s:~$ kubectl logs my-pod
+/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+10-listen-on-ipv6-by-default.sh: info: Getting the checksum of /etc/nginx/conf.d/default.conf
+10-listen-on-ipv6-by-default.sh: info: Enabled listen on IPv6 in /etc/nginx/conf.d/default.conf
+/docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+/docker-entrypoint.sh: Configuration complete; ready for start up
+2024/09/10 13:56:39 [notice] 1#1: using the "epoll" event method
+2024/09/10 13:56:39 [notice] 1#1: nginx/1.27.1
+2024/09/10 13:56:39 [notice] 1#1: built by gcc 12.2.0 (Debian 12.2.0-14) 
+2024/09/10 13:56:39 [notice] 1#1: OS: Linux 6.8.0-1012-aws
+2024/09/10 13:56:39 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+2024/09/10 13:56:39 [notice] 1#1: start worker processes
+2024/09/10 13:56:39 [notice] 1#1: start worker process 28
+2024/09/10 13:56:39 [notice] 1#1: start worker process 29
+ubuntu@k8s:~$ kubectl exec my-pod -- ls 
+bin
+boot
+dev
+docker-entrypoint.d
+docker-entrypoint.sh
+etc
+home
+lib
+lib64
+media
+mnt
+opt
+proc
+root
+run
+sbin
+srv
+sys
+tmp
+usr
+var
+ubuntu@k8s:~$ kubectl exec -it my-pod -- /bin/bash
+root@my-pod:/# ls
+bin   dev		   docker-entrypoint.sh  home  lib64  mnt  proc  run   srv  tmp  var
+boot  docker-entrypoint.d  etc			 lib   media  opt  root  sbin  sys  usr
+root@my-pod:/# 
+
+ubuntu@k8s:~$ kubectl delete pod my-pod
+pod "my-pod" deleted
+ubuntu@k8s:~$ kubectl get pods
+No resources found in default namespace.
+ubuntu@k8s:~$ kubectl get pods -A
+NAMESPACE     NAME                          READY   STATUS    RESTARTS      AGE
+kube-system   coredns-6f6b679f8f-m88x9      1/1     Running   2 (26m ago)   2d7h
+kube-system   coredns-6f6b679f8f-sz8zc      1/1     Running   2 (26m ago)   2d7h
+kube-system   etcd-k8s                      1/1     Running   2 (26m ago)   2d7h
+kube-system   kube-apiserver-k8s            1/1     Running   2 (26m ago)   2d7h
+kube-system   kube-controller-manager-k8s   1/1     Running   2 (26m ago)   2d7h
+kube-system   kube-proxy-drvdb              1/1     Running   1 (26m ago)   2d
+kube-system   kube-proxy-fspfq              1/1     Running   2 (26m ago)   2d7h
+kube-system   kube-proxy-pwzhd              1/1     Running   2 (26m ago)   2d7h
+kube-system   kube-scheduler-k8s            1/1     Running   2 (26m ago)   2d7h
+kube-system   weave-net-9j8h9               2/2     Running   4 (26m ago)   2d7h
+kube-system   weave-net-lhv8b               2/2     Running   2 (26m ago)   2d
+kube-system   weave-net-s9pns               2/2     Running   5 (26m ago)   2d7h
+ubuntu@k8s:~$ 
+
+
+ubuntu@k8s:~$ kubectl apply -f myapp.yaml
+pod/my-pod created
+ubuntu@k8s:~$ kubectl get pods
+NAME     READY   STATUS    RESTARTS   AGE
+my-pod   1/1     Running   0          8s
+ubuntu@k8s:~$ kubectl get pod
+NAME     READY   STATUS    RESTARTS   AGE
+my-pod   1/1     Running   0          18s
+ubuntu@k8s:~$ kubectl get pod -o yaml
+apiVersion: v1
+items:
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    annotations:
+      kubectl.kubernetes.io/last-applied-configuration: |
+        {"apiVersion":"v1","kind":"Pod","metadata":{"annotations":{},"labels":{"app":"my-app"},"name":"my-pod","namespace":"default"},"spec":{"containers":[{"image":"nginx:latest","name":"my-container","ports":[{"containerPort":80}]}]}}
+    creationTimestamp: "2024-09-10T14:08:31Z"
+    labels:
+      app: my-app
+    name: my-pod
+    namespace: default
+    resourceVersion: "30326"
+    uid: 7575e5b2-324b-40b4-bc05-21b47101f3d8
+  spec:
+    containers:
+    - image: nginx:latest
+      imagePullPolicy: Always
+      name: my-container
+      ports:
+      - containerPort: 80
+        protocol: TCP
+      resources: {}
+      terminationMessagePath: /dev/termination-log
+      terminationMessagePolicy: File
+      volumeMounts:
+      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+        name: kube-api-access-rdsds
+        readOnly: true
+    dnsPolicy: ClusterFirst
+    enableServiceLinks: true
+    nodeName: k8w1
+    preemptionPolicy: PreemptLowerPriority
+    priority: 0
+    restartPolicy: Always
+    schedulerName: default-scheduler
+    securityContext: {}
+    serviceAccount: default
+    serviceAccountName: default
+    terminationGracePeriodSeconds: 30
+    tolerations:
+    - effect: NoExecute
+      key: node.kubernetes.io/not-ready
+      operator: Exists
+      tolerationSeconds: 300
+    - effect: NoExecute
+      key: node.kubernetes.io/unreachable
+      operator: Exists
+      tolerationSeconds: 300
+    volumes:
+    - name: kube-api-access-rdsds
+      projected:
+        defaultMode: 420
+        sources:
+        - serviceAccountToken:
+            expirationSeconds: 3607
+            path: token
+        - configMap:
+            items:
+            - key: ca.crt
+              path: ca.crt
+            name: kube-root-ca.crt
+        - downwardAPI:
+            items:
+            - fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.namespace
+              path: namespace
+  status:
+    conditions:
+    - lastProbeTime: null
+      lastTransitionTime: "2024-09-10T14:08:37Z"
+      status: "True"
+      type: PodReadyToStartContainers
+    - lastProbeTime: null
+      lastTransitionTime: "2024-09-10T14:08:31Z"
+      status: "True"
+      type: Initialized
+    - lastProbeTime: null
+      lastTransitionTime: "2024-09-10T14:08:37Z"
+      status: "True"
+      type: Ready
+    - lastProbeTime: null
+      lastTransitionTime: "2024-09-10T14:08:37Z"
+      status: "True"
+      type: ContainersReady
+    - lastProbeTime: null
+      lastTransitionTime: "2024-09-10T14:08:31Z"
+      status: "True"
+      type: PodScheduled
+    containerStatuses:
+    - containerID: containerd://f6557983b2502a79574677d1ffeb02500a5d03d58c3d98f26b81c8e3acd89153
+      image: docker.io/library/nginx:latest
+      imageID: docker.io/library/nginx@sha256:04ba374043ccd2fc5c593885c0eacddebabd5ca375f9323666f28dfd5a9710e3
+      lastState: {}
+      name: my-container
+      ready: true
+      restartCount: 0
+      started: true
+      state:
+        running:
+          startedAt: "2024-09-10T14:08:36Z"
+      volumeMounts:
+      - mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+        name: kube-api-access-rdsds
+        readOnly: true
+        recursiveReadOnly: Disabled
+    hostIP: 172.31.23.170
+    hostIPs:
+    - ip: 172.31.23.170
+    phase: Running
+    podIP: 10.44.0.1
+    podIPs:
+    - ip: 10.44.0.1
+    qosClass: BestEffort
+    startTime: "2024-09-10T14:08:31Z"
+kind: List
+metadata:
+  resourceVersion: ""
+ubuntu@k8s:~$ 
+ubuntu@k8s:~$ kubectl get pods --all-namespaces
+NAMESPACE     NAME                          READY   STATUS    RESTARTS      AGE
+default       my-pod                        1/1     Running   0             2m18s
+kube-system   coredns-6f6b679f8f-m88x9      1/1     Running   2 (30m ago)   2d7h
+kube-system   coredns-6f6b679f8f-sz8zc      1/1     Running   2 (30m ago)   2d7h
+kube-system   etcd-k8s                      1/1     Running   2 (30m ago)   2d7h
+kube-system   kube-apiserver-k8s            1/1     Running   2 (30m ago)   2d7h
+kube-system   kube-controller-manager-k8s   1/1     Running   2 (30m ago)   2d7h
+kube-system   kube-proxy-drvdb              1/1     Running   1 (30m ago)   2d
+kube-system   kube-proxy-fspfq              1/1     Running   2 (30m ago)   2d7h
+kube-system   kube-proxy-pwzhd              1/1     Running   2 (30m ago)   2d7h
+kube-system   kube-scheduler-k8s            1/1     Running   2 (30m ago)   2d7h
+kube-system   weave-net-9j8h9               2/2     Running   4 (30m ago)   2d7h
+kube-system   weave-net-lhv8b               2/2     Running   2 (30m ago)   2d
+kube-system   weave-net-s9pns               2/2     Running   5 (30m ago)   2d7h
+ubuntu@k8s:~$ kubectl get ns
+NAME              STATUS   AGE
+default           Active   2d7h
+kube-node-lease   Active   2d7h
+kube-public       Active   2d7h
+kube-system       Active   2d7h
+ubuntu@k8s:~$ 
+
+Get pods by label:
+ubuntu@k8s:~$ kubectl get pods -l app=my-app
+NAME     READY   STATUS    RESTARTS   AGE
+my-pod   1/1     Running   0          4m24s
+ubuntu@k8s:~$
+
+Forceful deletion of a pod: kubectl delete pod my-app --grace-period=0 --force
+
+To delete empty lines in a given file: sed -i ‘/^$/d’ my app.yaml
+
+Creating multi container pod. Also called as sidecar container:
+
+vi multicontinerpod.yaml
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: webapp-pod
+spec: 
+  containers:
+  - name: webapp-container  # Fixed typo here
+    image: nginx:latest
+    ports:
+      - containerPort: 80
+    volumeMounts:
+      - name: shared-data
+        mountPath: /usr/share/nginx/html  # Ensure this path matches with your intended use
+
+  - name: fetcher-container
+    image: busybox:latest
+    args:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          wget -O /shared-data/index.html https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
+          ls -l /shared-data
+          sleep 120
+        done
+    volumeMounts: 
+      - name: shared-data
+        mountPath: /shared-data  # Ensure this path matches with your intended use
+
+  volumes:
+  - name: shared-data
+    emptyDir: {}
+
+ubuntu@k8s:~$ kubectl apply -f multicontainerpod.yaml 
+pod/webapp-pod created
+ubuntu@k8s:~$ kubectl get pods
+NAME         READY   STATUS    RESTARTS   AGE
+my-pod       1/1     Running   0          82m
+webapp-pod   2/2     Running   0          4m38s
+ubuntu@k8s:~$ kubectl logs webapp-pod
+Defaulted container "webapp-container" out of: webapp-container, fetcher-container
+/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+10-listen-on-ipv6-by-default.sh: info: Getting the checksum of /etc/nginx/conf.d/default.conf
+10-listen-on-ipv6-by-default.sh: info: Enabled listen on IPv6 in /etc/nginx/conf.d/default.conf
+/docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+/docker-entrypoint.sh: Configuration complete; ready for start up
+2024/09/10 15:26:12 [notice] 1#1: using the "epoll" event method
+2024/09/10 15:26:12 [notice] 1#1: nginx/1.27.1
+2024/09/10 15:26:12 [notice] 1#1: built by gcc 12.2.0 (Debian 12.2.0-14) 
+2024/09/10 15:26:12 [notice] 1#1: OS: Linux 6.8.0-1012-aws
+2024/09/10 15:26:12 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+2024/09/10 15:26:12 [notice] 1#1: start worker processes
+2024/09/10 15:26:12 [notice] 1#1: start worker process 28
+2024/09/10 15:26:12 [notice] 1#1: start worker process 29
+ubuntu@k8s:~$ kubectl logs webapp-pod -c fetcher-container
+Connecting to www.w3.org (104.18.23.19:443)
+wget: note: TLS certificate validation not implemented
+saving to '/shared-data/index.html'
+index.html           100% |********************************| 34351  0:00:00 ETA
+'/shared-data/index.html' saved
+total 36
+-rw-r--r--    1 root     root         34351 Sep 10 15:26 index.html
+Connecting to www.w3.org (104.18.23.19:443)
+wget: note: TLS certificate validation not implemented
+saving to '/shared-data/index.html'
+index.html           100% |********************************| 34351  0:00:00 ETA
+'/shared-data/index.html' saved
+total 36
+-rw-r--r--    1 root     root         34351 Sep 10 15:28 index.html
+Connecting to www.w3.org (104.18.22.19:443)
+wget: note: TLS certificate validation not implemented
+saving to '/shared-data/index.html'
+index.html           100% |********************************| 34351  0:00:00 ETA
+'/shared-data/index.html' saved
+total 36
+-rw-r--r--    1 root     root         34351 Sep 10 15:30 index.html
+Connecting to www.w3.org (104.18.23.19:443)
+wget: note: TLS certificate validation not implemented
+saving to '/shared-data/index.html'
+index.html           100% |********************************| 34351  0:00:00 ETA
+'/shared-data/index.html' saved
+total 36
+-rw-r--r--    1 root     root         34351 Sep 10 15:32 index.html
+ubuntu@k8s:~$ kubectl logs webapp-pod -c webapp-container
+/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+10-listen-on-ipv6-by-default.sh: info: Getting the checksum of /etc/nginx/conf.d/default.conf
+10-listen-on-ipv6-by-default.sh: info: Enabled listen on IPv6 in /etc/nginx/conf.d/default.conf
+/docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+/docker-entrypoint.sh: Configuration complete; ready for start up
+2024/09/10 15:26:12 [notice] 1#1: using the "epoll" event method
+2024/09/10 15:26:12 [notice] 1#1: nginx/1.27.1
+2024/09/10 15:26:12 [notice] 1#1: built by gcc 12.2.0 (Debian 12.2.0-14) 
+2024/09/10 15:26:12 [notice] 1#1: OS: Linux 6.8.0-1012-aws
+2024/09/10 15:26:12 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
+2024/09/10 15:26:12 [notice] 1#1: start worker processes
+2024/09/10 15:26:12 [notice] 1#1: start worker process 28
+2024/09/10 15:26:12 [notice] 1#1: start worker process 29
+ubuntu@k8s:~$ kubectl exec -it webapp-pod -c webapp-container -- ls /usr/share/nginx/html
+index.html
+ubuntu@k8s:~$ kubectl get pods -o wide
+
+
+Kubernetes (K8s) objects are persistent entities in the Kubernetes system that represent the desired state of your cluster. These objects are used to manage and deploy applications, configure resources, and maintain the state of the system. Each object in Kubernetes is defined by a YAML or JSON manifest file, and Kubernetes continuously works to ensure that the actual state of the cluster matches the desired state defined by these objects.
+Here’s a summary of the main Kubernetes objects and their purposes:
+1. Pod
+	•	Definition: The smallest and simplest Kubernetes object. It represents a single instance of a running process in your cluster.
+	•	Usage: Typically contains one or more containers that share network and storage resources. Pods are used for running your application instances.
+2. Service
+	•	Definition: An abstraction that defines a logical set of Pods and a policy by which to access them.
+	•	Usage: Provides a stable endpoint (IP address and DNS name) for accessing Pods. Services enable communication between Pods and external applications or services.
+3. ReplicaSet
+	•	Definition: Ensures that a specified number of replicas of a Pod are running at any given time.
+	•	Usage: Maintains the desired number of Pod replicas to ensure availability and scaling.
+4. Deployment
+	•	Definition: Manages the deployment and scaling of a ReplicaSet.
+	•	Usage: Provides declarative updates to Pods and ReplicaSets. It allows you to perform rolling updates and rollbacks.
+5. StatefulSet
+	•	Definition: Manages the deployment and scaling of a set of Pods, and provides guarantees about the ordering and uniqueness of these Pods.
+	•	Usage: Useful for applications that require stable, unique network identifiers and stable storage.
+6. DaemonSet
+	•	Definition: Ensures that a copy of a Pod is running on all (or some) nodes in the cluster.
+	•	Usage: Often used for background tasks that need to run on every node, such as log collection or monitoring.
+7. Job
+	•	Definition: Creates one or more Pods and ensures that a specified number of them successfully complete.
+	•	Usage: Useful for batch processing tasks that need to be run to completion.
+8. CronJob
+	•	Definition: Creates Jobs on a scheduled basis.
+	•	Usage: Similar to cron jobs in Unix-based systems, it allows you to run batch jobs periodically at specified times.
+9. Namespace
+	•	Definition: Provides a mechanism for isolating groups of resources within a single cluster.
+	•	Usage: Useful for organizing and managing resources, particularly in multi-tenant environments.
+10. ConfigMap
+	•	Definition: Provides a way to inject configuration data into Pods.
+	•	Usage: Allows you to decouple configuration from application code.
+11. Secret
+	•	Definition: Used to store and manage sensitive information, such as passwords, OAuth tokens, and SSH keys.
+	•	Usage: Provides a way to manage sensitive data securely.
+12. PersistentVolume (PV)
+	•	Definition: Represents a piece of storage in the cluster.
+	•	Usage: Provides a way to manage and provision storage resources independently of Pods.
+13. PersistentVolumeClaim (PVC)
+	•	Definition: Represents a request for storage by a user.
+	•	Usage: Allows Pods to request storage resources, which are then bound to a PersistentVolume.
+14. Ingress
+	•	Definition: Manages external access to services, typically HTTP.
+	•	Usage: Provides a way to define HTTP routes and manage access to services, often including features like SSL termination and load balancing.
+15. NetworkPolicy
+	•	Definition: Defines rules for controlling the traffic between Pods.
+	•	Usage: Allows you to enforce network security policies and control which Pods can communicate with each other.
+16. Role and ClusterRole
+	•	Definition: Define a set of permissions for accessing resources.
+	•	Usage: Roles apply to a specific namespace, while ClusterRoles apply cluster-wide.
+17. RoleBinding and ClusterRoleBinding
+	•	Definition: Bind Roles or ClusterRoles to users or groups.
+	•	Usage: Grant the permissions defined in a Role or ClusterRole to specific users or service accounts.
+Summary
+Kubernetes objects are the fundamental building blocks used to define, manage, and control applications and resources within a Kubernetes cluster. Each object has a specific purpose and contributes to the overall functionality and management of containerized applications. By defining these objects in YAML or JSON, you declaratively describe the desired state of your applications and infrastructure, and Kubernetes takes care of maintaining that state.
+
+
+
+￼
+
+
+To implement metric server:
+kubectl get --raw "/apis/metrics.k8s.io/v1beta1/namespaces/kube-system/pods/kube-scheduler-minikube" | jq '.'
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+To check the parameters: kubectl top pod myapp or kubectl top pod webapp-pod
+
+After this I don’t see the metrics report, issue is resolved with the help of chatgpt.
+
+sudo kubeadm init phase certs all
+sudo systemctl restart kubelet
+
+kubectl edit deploy metrics-server -n kube-system
+
+spec:
+  containers:
+  - name: metrics-server
+    image: registry.k8s.io/metrics-server/metrics-server:v0.7.2
+    args:
+      - /metrics-server
+      - --kubelet-insecure-tls
+
+openssl x509 -in /var/lib/kubelet/pki/kubelet-client-current.pem -text -noout
+
+ubuntu@k8s:~$ kubectl get pods
+NAME     READY   STATUS    RESTARTS   AGE
+my-pod   1/1     Running   0          13m
+ubuntu@k8s:~$ kubectl top pod my-pod
+NAME     CPU(cores)   MEMORY(bytes)   
+my-pod   0m           2Mi             
+ubuntu@k8s:~$ 
+
+
+ReplicaSet:
+vi replicaset.yaml
+
+apiVersion: v1
+kind: ReplicaSet
+metadata:
+  name: nginx-replicaset
+spec: 
+  replicas: 3
+  selector: 
+    MatchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx 
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+
+
+ubuntu@k8s:~$ kubectl apply -f replicaset.yaml 
+replicaset.apps/nginx-replicaset created
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6krh6   1/1     Running   0          2m3s
+nginx-replicaset-6qktj   1/1     Running   0          2m3s
+nginx-replicaset-nf6sd   1/1     Running   0          2m3s
+ubuntu@k8s:~$ kubectl top pod nginx-replicaset-6krh6
+NAME                     CPU(cores)   MEMORY(bytes)   
+nginx-replicaset-6krh6   0m           4Mi             
+ubuntu@k8s:~$ kubectl top node k8w1
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8w1   20m          2%     392Mi           45%       
+ubuntu@k8s:~$ kubectl top node k8w2
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8w2   9m           0%     538Mi           62%       
+ubuntu@k8s:~$ kubectl top node k8s
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8s    40m          4%     672Mi           78%       
+ubuntu@k8s:~$ ubuntu@k8s:~$ kubectl apply -f replicaset.yaml 
+replicaset.apps/nginx-replicaset created
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6krh6   1/1     Running   0          2m3s
+nginx-replicaset-6qktj   1/1     Running   0          2m3s
+nginx-replicaset-nf6sd   1/1     Running   0          2m3s
+ubuntu@k8s:~$ kubectl top pod nginx-replicaset-6krh6
+NAME                     CPU(cores)   MEMORY(bytes)   
+nginx-replicaset-6krh6   0m           4Mi             
+ubuntu@k8s:~$ kubectl top node k8w1
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8w1   20m          2%     392Mi           45%       
+ubuntu@k8s:~$ kubectl top node k8w2
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8w2   9m           0%     538Mi           62%       
+ubuntu@k8s:~$ kubectl top node k8s
+NAME   CPU(cores)   CPU%   MEMORY(bytes)   MEMORY%   
+k8s    40m          4%     672Mi           78%       
+ubuntu@k8s:~$ kubectl scale --replicas=5 rs/nginx-replicaset
+replicaset.apps/nginx-replicaset scaled
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6krh6   1/1     Running   0          12m
+nginx-replicaset-6qktj   1/1     Running   0          12m
+nginx-replicaset-nf6sd   1/1     Running   0          12m
+nginx-replicaset-p522b   1/1     Running   0          8s
+nginx-replicaset-pqnjh   1/1     Running   0          8s
+ubuntu@k8s:~$ kubectl edit rs/nginx-replicaset
+replicaset.apps/nginx-replicaset edited    #  Made replicase=2
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6qktj   1/1     Running   0          13m
+nginx-replicaset-nf6sd   1/1     Running   0          13m
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6qktj   1/1     Running   0          13m
+nginx-replicaset-nf6sd   1/1     Running   0          13m
+ubuntu@k8s:~$ kubectl get pod -l app=nginx
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-6qktj   1/1     Running   0          15m
+nginx-replicaset-nf6sd   1/1     Running   0          15m
+ubuntu@k8s:~$ kubectl delete pod -l app=nginx
+pod "nginx-replicaset-6qktj" deleted
+pod "nginx-replicaset-nf6sd" deleted
+ubuntu@k8s:~$ kubectl get pods
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-jddqb   1/1     Running   0          8s
+nginx-replicaset-qjthl   1/1     Running   0          8s
+ubuntu@k8s:~$ kubectl delete rs nginx-replicaset
+replicaset.apps "nginx-replicaset" deleted
+ubuntu@k8s:~$ kubectl get rs
+No resources found in default namespace.
+ubuntu@k8s:~$ kubectl get pods
+No resources found in default namespace.
+ubuntu@k8s:~$ 
+
+ubuntu@k8s:~$ kubectl apply -f replicaset.yaml 
+replicaset.apps/nginx-replicaset created
+ubuntu@k8s:~$ kubectl get rs
+NAME               DESIRED   CURRENT   READY   AGE
+nginx-replicaset   3         3         3       6s
+ubuntu@k8s:~$ kubectl get pods --selector=app=nginx
+NAME                     READY   STATUS    RESTARTS   AGE
+nginx-replicaset-7fr6x   1/1     Running   0          27s
+nginx-replicaset-tfkp7   1/1     Running   0          27s
+nginx-replicaset-twxnz   1/1     Running   0          27s
+ubuntu@k8s:~$ 
+
+ubuntu@k8s:~$ kubectl get rs/nginx-replicaset -o yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{"annotations":{},"name":"nginx-replicaset","namespace":"default"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"nginx"}},"template":{"metadata":{"labels":{"app":"nginx"}},"spec":{"containers":[{"image":"nginx:latest","name":"nginx-container","ports":[{"containerPort":80}]}]}}}}
+  creationTimestamp: "2024-09-10T19:02:17Z"
+  generation: 1
+  name: nginx-replicaset
+  namespace: default
+  resourceVersion: "44401"
+  uid: c53b031e-7844-412d-836a-007e0fb03e15
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx:latest
+        imagePullPolicy: Always
+        name: nginx-container
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status:
+  availableReplicas: 3
+  fullyLabeledReplicas: 3
+  observedGeneration: 1
+  readyReplicas: 3
+  replicas: 3
+ubuntu@k8s:~$ 
+
+
+Command to check objects and their short names:
+
+ubuntu@k8s:~$ kubectl api-resources
+NAME                                SHORTNAMES   APIVERSION                        NAMESPACED   KIND
+bindings                                         v1                                true         Binding
+componentstatuses                   cs           v1                                false        ComponentStatus
+configmaps                          cm           v1                                true         ConfigMap
+endpoints                           ep           v1                                true         Endpoints
+events                              ev           v1                                true         Event
+limitranges                         limits       v1                                true         LimitRange
+namespaces                          ns           v1                                false        Namespace
+nodes                               no           v1                                false        Node
+persistentvolumeclaims              pvc          v1                                true         PersistentVolumeClaim
+persistentvolumes                   pv           v1                                false        PersistentVolume
+pods                                po           v1                                true         Pod
+podtemplates                                     v1                                true         PodTemplate
+replicationcontrollers              rc           v1                                true         ReplicationController
+resourcequotas                      quota        v1                                true         ResourceQuota
+secrets                                          v1                                true         Secret
+
+.
+.
+.
+Discarded the raining data.
+
+
+
+Deployment:
+vi deploy.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx-container
+        image: nginx:latest
+        ports:
+        - containerPort: 80
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%    # Up to 25% of the pods can be unavailable during the update.
+      maxSurge: 25%               # Up to 25% more than the desired number of pods can be created during the update.
+
+
+ubuntu@k8s:~$ kubectl apply -f deploy.yaml 
+deployment.apps/nginx-deployment created
+ubuntu@k8s:~$ kubectl get pods
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-6575f54b8f-97rs4   1/1     Running   0          7s
+nginx-deployment-6575f54b8f-9rrf7   1/1     Running   0          7s
+nginx-deployment-6575f54b8f-vx6tv   1/1     Running   0          7s
+ubuntu@k8s:~$ kubectl get deploy rs
+Error from server (NotFound): deployments.apps "rs" not found
+ubuntu@k8s:~$ kubectl get deploy
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           33s
+ubuntu@k8s:~$ kubectl get rs
+NAME                          DESIRED   CURRENT   READY   AGE
+nginx-deployment-6575f54b8f   3         3         3       37s
+ubuntu@k8s:~$ kubectl get deployments nginx-deployment
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           118s
+ubuntu@k8s:~$ kubectl describe deployments nginx-deployment
+Name:                   nginx-deployment
+Namespace:              default
+CreationTimestamp:      Tue, 10 Sep 2024 19:17:27 +0000
+Labels:                 <none>
+Annotations:            deployment.kubernetes.io/revision: 1
+Selector:               app=nginx
+Replicas:               3 desired | 3 updated | 3 total | 3 available | 0 unavailable
+StrategyType:           RollingUpdate
+MinReadySeconds:        0
+RollingUpdateStrategy:  25% max unavailable, 25% max surge
+Pod Template:
+  Labels:  app=nginx
+  Containers:
+   nginx-container:
+    Image:         nginx:latest
+    Port:          80/TCP
+    Host Port:     0/TCP
+    Environment:   <none>
+    Mounts:        <none>
+  Volumes:         <none>
+  Node-Selectors:  <none>
+  Tolerations:     <none>
+Conditions:
+  Type           Status  Reason
+  ----           ------  ------
+  Available      True    MinimumReplicasAvailable
+  Progressing    True    NewReplicaSetAvailable
+OldReplicaSets:  <none>
+NewReplicaSet:   nginx-deployment-6575f54b8f (3/3 replicas created)
+Events:
+  Type    Reason             Age    From                   Message
+  ----    ------             ----   ----                   -------
+  Normal  ScalingReplicaSet  3m41s  deployment-controller  Scaled up replica set nginx-deployment-6575f54b8f to 3
+ubuntu@k8s:~$ kubectl get pods -o wide
+NAME                                READY   STATUS    RESTARTS   AGE    IP          NODE   NOMINATED NODE   READINESS GATES
+nginx-deployment-6575f54b8f-97rs4   1/1     Running   0          4m9s   10.36.0.1   k8w2   <none>           <none>
+nginx-deployment-6575f54b8f-9rrf7   1/1     Running   0          4m9s   10.44.0.1   k8w1   <none>           <none>
+nginx-deployment-6575f54b8f-vx6tv   1/1     Running   0          4m9s   10.36.0.2   k8w2   <none>           <none>
+ubuntu@k8s:~$ kubectl scale deployments nginx-deployment --replicas=6
+deployment.apps/nginx-deployment scaled
+ubuntu@k8s:~$ kubectl get pods -o wide
+NAME                                READY   STATUS    RESTARTS   AGE     IP          NODE   NOMINATED NODE   READINESS GATES
+nginx-deployment-6575f54b8f-2p7d2   1/1     Running   0          12s     10.36.0.3   k8w2   <none>           <none>
+nginx-deployment-6575f54b8f-97rs4   1/1     Running   0          5m40s   10.36.0.1   k8w2   <none>           <none>
+nginx-deployment-6575f54b8f-9n4h7   1/1     Running   0          12s     10.44.0.4   k8w1   <none>           <none>
+nginx-deployment-6575f54b8f-9rrf7   1/1     Running   0          5m40s   10.44.0.1   k8w1   <none>           <none>
+nginx-deployment-6575f54b8f-d5hws   1/1     Running   0          12s     10.44.0.3   k8w1   <none>           <none>
+nginx-deployment-6575f54b8f-vx6tv   1/1     Running   0          5m40s   10.36.0.2   k8w2   <none>           <none>
+ubuntu@k8s:~$ kubectl edit deploy nginx-deployment
+deployment.apps/nginx-deployment edited  # changed replicase to 7 from 6.
+ubuntu@k8s:~$ kubectl get pods
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-6575f54b8f-2p7d2   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-97rs4   1/1     Running   0          7m
+nginx-deployment-6575f54b8f-98mq9   1/1     Running   0          7s
+nginx-deployment-6575f54b8f-9n4h7   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-9rrf7   1/1     Running   0          7m
+nginx-deployment-6575f54b8f-d5hws   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-vx6tv   1/1     Running   0          7m
+ubuntu@k8s:~$ ubectl edit deploy nginx-deployment
+deployment.apps/nginx-deployment edited
+ubuntu@k8s:~$ kubectl get pods
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-6575f54b8f-2p7d2   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-97rs4   1/1     Running   0          7m
+nginx-deployment-6575f54b8f-98mq9   1/1     Running   0          7s
+nginx-deployment-6575f54b8f-9n4h7   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-9rrf7   1/1     Running   0          7m
+nginx-deployment-6575f54b8f-d5hws   1/1     Running   0          92s
+nginx-deployment-6575f54b8f-vx6tv   1/1     Running   0          7m
+ubuntu@k8s:~$ kubectl rollout history deploy/nginx-deployment
+deployment.apps/nginx-deployment 
+REVISION  CHANGE-CAUSE
+1         <none>
+
+ubuntu@k8s:~$ kubectl rollout undo deploy nginx-deployment
+error: no rollout history found for deployment "nginx-deployment"
+ubuntu@k8s:~$ kubectl rollout 1 deploy nxinx-deployment
+error: unknown command "1 deploy nxinx-deployment"
+See 'kubectl rollout -h' for help and examples
+ubuntu@k8s:~$ kubectl rollout -h
+Manage the rollout of one or many resources.
+        
+ Valid resource types include:
+
+  *  deployments
+  *  daemonsets
+  *  statefulsets
+
+Examples:
+  # Rollback to the previous deployment
+  kubectl rollout undo deployment/abc
+  
+  # Check the rollout status of a daemonset
+  kubectl rollout status daemonset/foo
+  
+  # Restart a deployment
+  kubectl rollout restart deployment/abc
+  
+  # Restart deployments with the 'app=nginx' label
+  kubectl rollout restart deployment --selector=app=nginx
+
+Available Commands:
+  history       View rollout history
+  pause         Mark the provided resource as paused
+  restart       Restart a resource
+  resume        Resume a paused resource
+  status        Show the status of the rollout
+  undo          Undo a previous rollout
+
+Usage:
+  kubectl rollout SUBCOMMAND [options]
+
+Use "kubectl rollout <command> --help" for more information about a given command.
+Use "kubectl options" for a list of global command-line options (applies to all commands).
+ubuntu@k8s:~$
+
+
+
+ubuntu@k8s:~$ kubectl get deploy nginx-deployment -o yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"nginx-deployment","namespace":"default"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"nginx"}},"strategy":{"rollingUpdate":{"maxSurge":"25%","maxUnavailable":"25%"},"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"nginx"}},"spec":{"containers":[{"image":"nginx:latest","name":"nginx-container","ports":[{"containerPort":80}]}]}}}}
+  creationTimestamp: "2024-09-10T19:17:27Z"
+  generation: 3
+  name: nginx-deployment
+  namespace: default
+  resourceVersion: "46517"
+  uid: d6519c94-90bd-4398-8e41-0d923f1e0b78
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 7
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: nginx
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - image: nginx:latest
+        imagePullPolicy: Always
+        name: nginx-container
+        ports:
+        - containerPort: 80
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+status:
+  availableReplicas: 7
+  conditions:
+  - lastTransitionTime: "2024-09-10T19:17:28Z"
+    lastUpdateTime: "2024-09-10T19:17:29Z"
+    message: ReplicaSet "nginx-deployment-6575f54b8f" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2024-09-10T19:22:58Z"
+    lastUpdateTime: "2024-09-10T19:22:58Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 3
+  readyReplicas: 7
+  replicas: 
+  updatedReplicas: 7
+ubuntu@k8s:~$ kubectl delete deploy nginx-deployment
+deployment.apps "nginx-deployment" deleted
+ubuntu@k8s:~$ 
+
+
+kubectl set image deploy nginx-deployment nginx-container=nginx:1.27.0 -record
+kubectl rollout status deployment/nginx-deployment
+kubectl rollout history deploy nginx-deployment
+kubectl get rs
+To know more about individual release, we can give by using below command along with what revision
+kubectl rollout history deploy nginx-deployment --revision=2
+You can rollback to a specific revision by specifying it with --to-revision
+kubectl rollout undo deployment/nginx-deployment --to-revision=1
+kubectl describe deploy deployment_name
+After deployment created also, we can update annotate which will update change-cause
+kubectl annotate deployment nginx-deployment kubernetes.io/change-cause="image updated to 1.16.1" --overwrite
+
+Service:
+
+Kubernetes services are used to expose applications running in Pods to other Pods or external clients. There are several types of services in Kubernetes, each serving different purposes based on how you want to expose your application. Here’s an overview of the different Kubernetes service types:
+1. ClusterIP
+	•	Definition: The default service type. It exposes the service on a cluster-internal IP. The service is only accessible from within the cluster.
+	•	Usage: Useful for internal communication between Pods within the cluster.
+	•	Example: yaml Copy code   apiVersion: v1
+	•	kind: Service
+	•	metadata:
+	•	  name: my-service
+	•	spec:
+	•	  selector:
+	•	    app: my-app
+	•	  ports:
+	•	    - protocol: TCP
+	•	      port: 80
+	•	      targetPort: 8080
+	•	  type: ClusterIP
+	•	  
+2. NodePort
+	•	Definition: Exposes the service on each Node’s IP at a static port (the NodePort). This makes the service accessible externally via <NodeIP>:<NodePort>.
+	•	Usage: Useful for exposing services to external traffic when you don’t have an external load balancer. Typically used for development and testing.
+	•	Example: yaml Copy code   apiVersion: v1
+	•	kind: Service
+	•	metadata:
+	•	  name: my-service
+	•	spec:
+	•	  selector:
+	•	    app: my-app
+	•	  ports:
+	•	    - protocol: TCP
+	•	      port: 80
+	•	      targetPort: 8080
+	•	      nodePort: 30000  # Static port for external access
+	•	  type: NodePort
+	•	  
+3. LoadBalancer
+	•	Definition: Exposes the service externally using a cloud provider’s load balancer. It automatically provisions a load balancer and assigns a public IP address.
+	•	Usage: Useful for exposing services to the internet and balancing incoming traffic across Pods. Supported by cloud providers like AWS, GCP, and Azure.
+	•	Example: yaml Copy code   apiVersion: v1
+	•	kind: Service
+	•	metadata:
+	•	  name: my-service
+	•	spec:
+	•	  selector:
+	•	    app: my-app
+	•	  ports:
+	•	    - protocol: TCP
+	•	      port: 80
+	•	      targetPort: 8080
+	•	  type: LoadBalancer
+	•	  
+4. ExternalName
+	•	Definition: Maps a service to a DNS name by returning a CNAME record. It doesn’t create a proxy or a load balancer. It simply allows Kubernetes services to refer to an external service using DNS.
+	•	Usage: Useful for integrating Kubernetes services with external services that are not managed by Kubernetes.
+	•	Example: 
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+spec:
+  type: ExternalName
+  externalName: my-external-service.example.com
+Summary of Service Types
+	1	ClusterIP: Internal access only. Default type, no external access.
+	2	NodePort: External access via Node IP and static port.
+	3	LoadBalancer: External access via a cloud provider’s load balancer.
+	4	ExternalName: Maps to an external DNS name without proxying.
+
+Namespaces:
+
+Kubernetes namespaces are a way to organize and manage resources within a Kubernetes cluster. They allow you to create multiple virtual clusters within a single physical cluster, providing a mechanism for resource isolation and management. Here's a detailed overview of Kubernetes namespaces:
+Purpose of Namespaces
+	1	Isolation: Namespaces allow you to isolate resources such as Pods, Services, and Deployments. This is useful for separating different environments (e.g., development, staging, production) or different teams working in the same cluster.
+	2	Resource Management: Namespaces can help in managing and limiting resources by applying resource quotas and limits at the namespace level.
+	3	Access Control: You can apply Role-Based Access Control (RBAC) rules to restrict access to resources within a namespace.
+	4	Organization: They help in organizing resources logically, making it easier to manage and navigate complex deployments.
+Common Namespace Operations
+1. Listing Namespaces
+To view the existing namespaces in your cluster:
+kubectl get namespaces
+
+2. Creating a Namespace
+To create a new namespace, define a YAML file like this:
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: my-namespace
+
+Apply yaml file using:
+kubectl apply -f namespace.yaml
+
+3. Deleting a Namespace
+To delete a namespace and all the resources within it:
+kubectl delete namespace my-namespace
+Be cautious when deleting namespaces, as this will remove all resources within the namespace.
+4. Using a Namespace
+To operate within a specific namespace, you can specify the --namespace flag with kubectl commands. For example:
+kubectl get pods --namespace=my-namespace
+You can also set a default namespace for your current context using:
+kubectl config set-context --current --namespace=my-namespace
+
+This will set my-namespace as the default namespace for all kubectl commands in your current context.
+Resource Quotas and Limits
+Namespaces can be used to manage resource quotas and limits:
+	•	ResourceQuota: Define a ResourceQuota to limit the resources (like CPU, memory, number of Pods) used within a namespace. Example ResourceQuota YAML:
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: my-quota
+  namespace: my-namespace
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    pods: "10"
+
+LimitRange: Define a LimitRange to set default resource requests and limits for Pods and containers in a namespace.
+Example LimitRange YAML:
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: my-limit-range
+spec:
+  limits:
+  - max:
+      cpu: "2"
+      memory: "4Gi"
+    min:
+      cpu: "100m"
+      memory: "256Mi"
+    type: Container
+Namespace Scope
+	•	Cluster-wide Resources: Some resources, like Nodes and PersistentVolumes, are not namespaced and exist at the cluster level.
+	•	Namespace-scoped Resources: Resources like Pods, Services, Deployments, and ConfigMaps are namespace-scoped and only accessible within their respective namespaces.
+Summary
+Namespaces in Kubernetes are a powerful feature for organizing and managing resources within a cluster. They provide isolation, resource management, and access control, helping to maintain a clean and efficient cluster environment. You can create, manage, and delete namespaces, as well as use them to set resource quotas and limits for better resource utilization.
+
+ubuntu@k8s:~$ cat ns_deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-nsdeploy
+  namespace: my-namespace
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-app
+  template:
+    metadata:
+      labels:
+        app: my-app
+    spec:
+      containers:
+      - name: my-container
+        image: nginx
+        ports:
+        - containerPort: 80
+ubuntu@k8s:~$ kubectl apply -f ns_deploy.yaml
+Error from server (NotFound): error when creating "ns_deploy.yaml": namespaces "my-namespace" not found
+ubuntu@k8s:~$ kubectl create ns my-namespace
+namespace/my-namespace created
+ubuntu@k8s:~$ kubectl apply -f ns_deploy.yaml
+deployment.apps/my-nsdeploy created
+ubuntu@k8s:~$ kubectl get deploy
+No resources found in default namespace.
+ubuntu@k8s:~$ kubectl get ns
+NAME              STATUS   AGE
+default           Active   3d10h
+kube-node-lease   Active   3d10h
+kube-public       Active   3d10h
+kube-system       Active   3d10h
+my-namespace      Active   20s
+ubuntu@k8s:~$ kubectl get deploy -n my-namespace
+NAME          READY   UP-TO-DATE   AVAILABLE   AGE
+my-nsdeploy   2/2     2            2           30s
+ubuntu@k8s:~$ kubectl config set-context --current --namespace=my-namespace
+Context "kubernetes-admin@kubernetes" modified.
+ubuntu@k8s:~$ kubectl config view | grep -i namespace
+    namespace: my-namespace
+ubuntu@k8s:~$ kubectl config get-contexts
+CURRENT   NAME                          CLUSTER      AUTHINFO           NAMESPACE
+*         kubernetes-admin@kubernetes   kubernetes   kubernetes-admin   my-namespace
+ubuntu@k8s:~$ kubectl config view
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://172.31.28.225:6443
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    namespace: my-namespace
+    user: kubernetes-admin
+  name: kubernetes-admin@kubernetes
+current-context: kubernetes-admin@kubernetes
+kind: Config
+preferences: {}
+users:
+- name: kubernetes-admin
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+ubuntu@k8s:~$ kubectl apply -f resource_limit.yaml 
+resourcequota/my-quota created
+ubuntu@k8s:~$ kubectl get resourcequota
+NAME       AGE   REQUEST                                                 LIMIT
+my-quota   20s   pods: 2/10, requests.cpu: 0/4, requests.memory: 0/8Gi   
+ubuntu@k8s:~$ kubectl describe resourcequota my-quota
+Name:            my-quota
+Namespace:       my-namespace
+Resource         Used  Hard
+--------         ----  ----
+pods             2     10
+requests.cpu     0     4
+requests.memory  0     8Gi
+ubuntu@k8s:~$ kubectl get limitrange
+No resources found in my-namespace namespace.
+ubuntu@k8s:~$ cat resource_limit.yaml 
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: my-quota
+  namespace: my-namespace
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: "8Gi"
+    pods: "10"
+
+ubuntu@k8s:~$ 
+
+
+Taints and Tolerations:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  labels:
+    env: test
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+  tolerations:
+  - key: "example-key"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+The above example used the effect of NoSchedule. Alternatively, you can use the effect of PreferNoSchedule.
+
+The allowed values for the effect field are:
+NoExecute
+This affects pods that are already running on the node as follows:
+	•	Pods that do not tolerate the taint are evicted immediately
+	•	Pods that tolerate the taint without specifying tolerationSeconds in their toleration specification remain bound forever
+	•	Pods that tolerate the taint with a specified tolerationSeconds remain bound for the specified amount of time. After that time elapses, the node lifecycle controller evicts the Pods from the node.
+NoSchedule
+No new Pods will be scheduled on the tainted node unless they have a matching toleration. Pods currently running on the node are not evicted.
+PreferNoSchedule
+PreferNoSchedule is a "preference" or "soft" version of NoSchedule. The control plane will try to avoid placing a Pod that does not tolerate the taint on the node, but it is not guaranteed.
+
+Taints on the nodes:
+Kubectl taint nodes <nodename> key=value:taint-effect
+kubectl taint nodes node1 key1=value1:NoSchedule
+
+ubuntu@k8s:~$ kubectl describe nodes
+Name:               k8s
+Roles:              control-plane
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8s
+                    kubernetes.io/os=linux
+                    node-role.kubernetes.io/control-plane=
+                    node.kubernetes.io/exclude-from-external-load-balancers=
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/containerd/containerd.sock
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+CreationTimestamp:  Sun, 08 Sep 2024 06:55:33 +0000
+Taints:             node-role.kubernetes.io/control-plane:NoSchedule
+Unschedulable:      false
+Lease:
+  HolderIdentity:  k8s
+  AcquireTime:     <unset>
+  RenewTime:       Wed, 11 Sep 2024 18:38:05 +0000
+Conditions:
+  Type                 Status  LastHeartbeatTime                 LastTransitionTime                Reason                       Message
+  ----                 ------  -----------------                 ------------------                ------                       -------
+  NetworkUnavailable   False   Wed, 11 Sep 2024 12:01:56 +0000   Wed, 11 Sep 2024 12:01:56 +0000   WeaveIsUp                    Weave pod has set this
+  MemoryPressure       False   Wed, 11 Sep 2024 18:34:51 +0000   Sun, 08 Sep 2024 06:55:31 +0000   KubeletHasSufficientMemory   kubelet has sufficient memory available
+  DiskPressure         False   Wed, 11 Sep 2024 18:34:51 +0000   Sun, 08 Sep 2024 06:55:31 +0000   KubeletHasNoDiskPressure     kubelet has no disk pressure
+  PIDPressure          False   Wed, 11 Sep 2024 18:34:51 +0000   Sun, 08 Sep 2024 06:55:31 +0000   KubeletHasSufficientPID      kubelet has sufficient PID available
+  Ready                True    Wed, 11 Sep 2024 18:34:51 +0000   Sun, 08 Sep 2024 06:57:20 +0000   KubeletReady                 kubelet is posting ready status
+Addresses:
+  InternalIP:  172.31.28.225
+  Hostname:    k8s
+Capacity:
+  cpu:                2
+  ephemeral-storage:  7034376Ki
+  hugepages-2Mi:      0
+  memory:             4006112Ki
+  pods:               110
+Allocatable:
+  cpu:                2
+  ephemeral-storage:  6482880911
+  hugepages-2Mi:      0
+  memory:             3903712Ki
+  pods:               110
+System Info:
+  Machine ID:                 ec25659f74924df4ac69cbe97c6c1952
+  System UUID:                ec25659f-7492-4df4-ac69-cbe97c6c1952
+  Boot ID:                    68bc2d27-50d3-4867-b1ae-a829356624b7
+  Kernel Version:             6.8.0-1014-aws
+  OS Image:                   Ubuntu 24.04 LTS
+  Operating System:           linux
+  Architecture:               amd64
+  Container Runtime Version:  containerd://1.7.21
+  Kubelet Version:            v1.31.0
+  Kube-Proxy Version:         
+Non-terminated Pods:          (8 in total)
+  Namespace                   Name                           CPU Requests  CPU Limits  Memory Requests  Memory Limits  Age
+  ---------                   ----                           ------------  ----------  ---------------  -------------  ---
+  kube-system                 coredns-6f6b679f8f-m88x9       100m (5%)     0 (0%)      70Mi (1%)        170Mi (4%)     3d11h
+  kube-system                 coredns-6f6b679f8f-sz8zc       100m (5%)     0 (0%)      70Mi (1%)        170Mi (4%)     3d11h
+  kube-system                 etcd-k8s                       100m (5%)     0 (0%)      100Mi (2%)       0 (0%)         3d11h
+  kube-system                 kube-apiserver-k8s             250m (12%)    0 (0%)      0 (0%)           0 (0%)         3d11h
+  kube-system                 kube-controller-manager-k8s    200m (10%)    0 (0%)      0 (0%)           0 (0%)         3d11h
+  kube-system                 kube-proxy-fspfq               0 (0%)        0 (0%)      0 (0%)           0 (0%)         3d11h
+  kube-system                 kube-scheduler-k8s             100m (5%)     0 (0%)      0 (0%)           0 (0%)         3d11h
+  kube-system                 weave-net-s9pns                100m (5%)     0 (0%)      0 (0%)           0 (0%)         3d11h
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests    Limits
+  --------           --------    ------
+  cpu                950m (47%)  0 (0%)
+  memory             240Mi (6%)  340Mi (8%)
+  ephemeral-storage  0 (0%)      0 (0%)
+  hugepages-2Mi      0 (0%)      0 (0%)
+Events:              <none>
+
+
+Name:               k8w1
+Roles:              <none>
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8w1
+                    kubernetes.io/os=linux
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/containerd/containerd.sock
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+CreationTimestamp:  Sun, 08 Sep 2024 06:57:34 +0000
+Taints:             <none>
+Unschedulable:      false
+Lease:
+  HolderIdentity:  k8w1
+  AcquireTime:     <unset>
+  RenewTime:       Wed, 11 Sep 2024 18:38:04 +0000
+Conditions:
+  Type                 Status  LastHeartbeatTime                 LastTransitionTime                Reason                       Message
+  ----                 ------  -----------------                 ------------------                ------                       -------
+  NetworkUnavailable   False   Wed, 11 Sep 2024 12:02:00 +0000   Wed, 11 Sep 2024 12:02:00 +0000   WeaveIsUp                    Weave pod has set this
+  MemoryPressure       False   Wed, 11 Sep 2024 18:36:11 +0000   Sun, 08 Sep 2024 06:57:34 +0000   KubeletHasSufficientMemory   kubelet has sufficient memory available
+  DiskPressure         False   Wed, 11 Sep 2024 18:36:11 +0000   Sun, 08 Sep 2024 06:57:34 +0000   KubeletHasNoDiskPressure     kubelet has no disk pressure
+  PIDPressure          False   Wed, 11 Sep 2024 18:36:11 +0000   Sun, 08 Sep 2024 06:57:34 +0000   KubeletHasSufficientPID      kubelet has sufficient PID available
+  Ready                True    Wed, 11 Sep 2024 18:36:11 +0000   Sun, 08 Sep 2024 06:57:42 +0000   KubeletReady                 kubelet is posting ready status
+Addresses:
+  InternalIP:  172.31.23.170
+  Hostname:    k8w1
+Capacity:
+  cpu:                2
+  ephemeral-storage:  7034376Ki
+  hugepages-2Mi:      0
+  memory:             4006108Ki
+  pods:               110
+Allocatable:
+  cpu:                2
+  ephemeral-storage:  6482880911
+  hugepages-2Mi:      0
+  memory:             3903708Ki
+  pods:               110
+System Info:
+  Machine ID:                 ec28bdbbd61d06e94705da95c99c094b
+  System UUID:                ec28bdbb-d61d-06e9-4705-da95c99c094b
+  Boot ID:                    e6b17d7e-3e12-4810-b4c3-a4c890fe620e
+  Kernel Version:             6.8.0-1014-aws
+  OS Image:                   Ubuntu 24.04 LTS
+  Operating System:           linux
+  Architecture:               amd64
+  Container Runtime Version:  containerd://1.7.21
+  Kubelet Version:            v1.31.0
+  Kube-Proxy Version:         
+Non-terminated Pods:          (4 in total)
+  Namespace                   Name                               CPU Requests  CPU Limits  Memory Requests  Memory Limits  Age
+  ---------                   ----                               ------------  ----------  ---------------  -------------  ---
+  kube-system                 kube-proxy-pwzhd                   0 (0%)        0 (0%)      0 (0%)           0 (0%)         3d11h
+  kube-system                 metrics-server-587b667b55-6qgqc    100m (5%)     0 (0%)      200Mi (5%)       0 (0%)         24h
+  kube-system                 weave-net-9j8h9                    100m (5%)     0 (0%)      0 (0%)           0 (0%)         3d11h
+  my-namespace                my-nsdeploy-557cdc96cd-5484c       0 (0%)        0 (0%)      0 (0%)           0 (0%)         68m
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests    Limits
+  --------           --------    ------
+  cpu                200m (10%)  0 (0%)
+  memory             200Mi (5%)  0 (0%)
+  ephemeral-storage  0 (0%)      0 (0%)
+  hugepages-2Mi      0 (0%)      0 (0%)
+Events:              <none>
+
+
+Name:               k8w2
+Roles:              <none>
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=k8w2
+                    kubernetes.io/os=linux
+Annotations:        kubeadm.alpha.kubernetes.io/cri-socket: unix:///var/run/containerd/containerd.sock
+                    node.alpha.kubernetes.io/ttl: 0
+                    volumes.kubernetes.io/controller-managed-attach-detach: true
+CreationTimestamp:  Sun, 08 Sep 2024 13:29:14 +0000
+Taints:             <none>
+Unschedulable:      false
+Lease:
+  HolderIdentity:  k8w2
+  AcquireTime:     <unset>
+  RenewTime:       Wed, 11 Sep 2024 18:38:00 +0000
+Conditions:
+  Type                 Status  LastHeartbeatTime                 LastTransitionTime                Reason                       Message
+  ----                 ------  -----------------                 ------------------                ------                       -------
+  NetworkUnavailable   False   Wed, 11 Sep 2024 12:01:58 +0000   Wed, 11 Sep 2024 12:01:58 +0000   WeaveIsUp                    Weave pod has set this
+  MemoryPressure       False   Wed, 11 Sep 2024 18:36:11 +0000   Tue, 10 Sep 2024 18:05:46 +0000   KubeletHasSufficientMemory   kubelet has sufficient memory available
+  DiskPressure         False   Wed, 11 Sep 2024 18:36:11 +0000   Tue, 10 Sep 2024 18:05:46 +0000   KubeletHasNoDiskPressure     kubelet has no disk pressure
+  PIDPressure          False   Wed, 11 Sep 2024 18:36:11 +0000   Tue, 10 Sep 2024 18:05:46 +0000   KubeletHasSufficientPID      kubelet has sufficient PID available
+  Ready                True    Wed, 11 Sep 2024 18:36:11 +0000   Tue, 10 Sep 2024 18:05:46 +0000   KubeletReady                 kubelet is posting ready status
+Addresses:
+  InternalIP:  172.31.28.251
+  Hostname:    k8w2
+Capacity:
+  cpu:                2
+  ephemeral-storage:  7034376Ki
+  hugepages-2Mi:      0
+  memory:             4006108Ki
+  pods:               110
+Allocatable:
+  cpu:                2
+  ephemeral-storage:  6482880911
+  hugepages-2Mi:      0
+  memory:             3903708Ki
+  pods:               110
+System Info:
+  Machine ID:                 ec2612acb14b6d87aeb497875c43f276
+  System UUID:                ec2612ac-b14b-6d87-aeb4-97875c43f276
+  Boot ID:                    c334f7e8-49eb-4e93-8abd-544f685bd1cb
+  Kernel Version:             6.8.0-1014-aws
+  OS Image:                   Ubuntu 24.04 LTS
+  Operating System:           linux
+  Architecture:               amd64
+  Container Runtime Version:  containerd://1.7.21
+  Kubelet Version:            v1.31.0
+  Kube-Proxy Version:         
+Non-terminated Pods:          (3 in total)
+  Namespace                   Name                            CPU Requests  CPU Limits  Memory Requests  Memory Limits  Age
+  ---------                   ----                            ------------  ----------  ---------------  -------------  ---
+  kube-system                 kube-proxy-drvdb                0 (0%)        0 (0%)      0 (0%)           0 (0%)         3d5h
+  kube-system                 weave-net-lhv8b                 100m (5%)     0 (0%)      0 (0%)           0 (0%)         3d5h
+  my-namespace                my-nsdeploy-557cdc96cd-pzqn2    0 (0%)        0 (0%)      0 (0%)           0 (0%)         68m
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests   Limits
+  --------           --------   ------
+  cpu                100m (5%)  0 (0%)
+  memory             0 (0%)     0 (0%)
+  ephemeral-storage  0 (0%)     0 (0%)
+  hugepages-2Mi      0 (0%)     0 (0%)
+Events:              <none>
+ubuntu@k8s:~$ 
+
+
+Node Affinity:
+Add a label to a node
+	1	List the nodes in your cluster, along with their labels: kubectl get nodes --show-labels
+	2	Choose one of your nodes, and add a label to it:
+	kubectl label nodes <your-node-name> disktype=ssd
+	3	Verify that your chosen node has a disktype=ssd label:
+	kubectl get nodes --show-labels
+
+Schedule a Pod using required node affinity
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd            
+  containers:
+  - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+
+1. Apply the manifest to create a Pod that is scheduled onto your chosen node:
+	kubectl apply -f https://k8s.io/examples/pods/pod-nginx-required-affinity.yaml
+2. Verify that the pod is running on your chosen node:
+	kubectl get pods --output=wide
+Schedule a Pod using preferred node affinity
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+spec:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd          
+  containers:
+  - name: nginx
+    image: nginx
+    imagePullPolicy: IfNotPresent
+
+
+Environmental variables in K8:
+kubectl run pod1 --image=nginx --dry-run=client -o yaml > pod1.yaml
+
+vi environmentalvariables.yaml
+
+appVersion: v1
+kind: Pod
+metadata:
+  labels:
+    run: pod1
+  name: env-demo
+spec: 
+  containers:
+  - image: nginx
+  name: pod1
+  env:
+  - name: DB_Hostname
+  value: kodecraft_db
+
+
+kubectl create secret generic aws-secret --namespace kube-system --from-literal "key_id=3SKROQPF3C" --from-literal "access_key=aOtWNqSsV1"
+
+
+Storage Class:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/sc$ cat deployment.yaml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-persistent-storage
+          mountPath: /usr/share/nginx/html
+      volumes:
+      - name: nginx-persistent-storage
+        persistentVolumeClaim:
+          claimName: ebs-claim 
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/sc$ cat sc.yaml 
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ebs-sc
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp2
+volumeBindingMode: WaitForFirstConsumer
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/sc$ cat pvc.yaml 
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ebs-claim
+  namespace: my-namespace
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ebs-sc
+  resources:
+    requests:
+      storage: 1Gi
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/sc$ 
+
+For SC to work we need to install the drivers first:
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh
+
+Create a secret for IAM user: 
+kubectl create secret generic aws-secret --namespace kube-system --from-literal "key_id=AKIA5WLTTM3SKROQPF3C" --from-literal "access_key=HGqtiTEFE2BR2ezaOtWNqSsV1jS3M4q1hCEqGKeD"
+
+- Add the AWS EBS CSI Driver Helm chart repository:
+```
+helm repo add aws-ebs-csi-driver https://kubernetes-sigs.github.io/aws-ebs-csi-driver
+helm repo update
+```
+- To check what helm repos have been added:
+```
+helm repo ls
+```
+
+- To check what charts presents within helm repo
+  
+```
+ helm search repo aws-ebs-csi-driver
+```
+
+- Deploy the AWS EBS CSI Driver using the following command:
+```
+helm upgrade --install aws-ebs-csi-driver \
+    --namespace kube-system \
+    aws-ebs-csi-driver/aws-ebs-csi-driver
+```
+
+- Verify that the driver has been deployed and the pods are running:
+```
+kubectl get pods -n kube-system -l app.kubernetes.io/name=aws-ebs-csi-driver
+```
+
+Provisioning EBS Volumes
+- Create a storageclass.yaml file and apply the sc.yaml file using the following command:
+kubectl apply -f sc.yaml
+Kubectl apply -f pic.yaml
+Kubectl apply -f deployment.yaml
+
+
+
+ConfigMaps:
+
+A ConfigMap is an API object used to store non-confidential data in key-value pairs. Pods can consume ConfigMaps as environment variables, command-line arguments, or as configuration files in a volume.
+A ConfigMap allows you to decouple environment-specific configuration from your container images, so that your applications are easily portable.
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ cat configmap.yaml 
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  COLOR: green
+  APP_TYPE: prod             
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ cat pod-env.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple-pod
+  labels:
+    name: simple-pod-green
+spec:
+  containers:
+  - name: simple-app-con
+    image: nginx
+    ports:
+    - containerPort: 80
+    envFrom:
+    - configMapRef:
+        name: app-config
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl apply -f configmap.yaml 
+configmap/app-config created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl get cm
+NAME               DATA   AGE
+app-config         2      8s
+kube-root-ca.crt   1      9d
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl apply -f pod-env.yaml
+pod/simple-pod created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl get pods
+NAME                                READY   STATUS              RESTARTS   AGE
+nginx-deployment1-75f9c5858-dpkq8   0/1     ContainerCreating   0          40m
+nginx-deployment1-75f9c5858-m7jsb   0/1     ContainerCreating   0          40m
+simple-pod                          1/1     Running             0          7s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl exec -it simple-pod -- printenv
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOSTNAME=simple-pod
+NGINX_VERSION=1.27.1
+NJS_VERSION=0.8.5
+NJS_RELEASE=1~bookworm
+PKG_RELEASE=1~bookworm
+DYNPKG_RELEASE=2~bookworm
+APP_TYPE=prod
+COLOR=green
+KUBERNETES_PORT_443_TCP_PORT=443
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBERNETES_SERVICE_HOST=10.96.0.1
+KUBERNETES_SERVICE_PORT=443
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_PORT=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+TERM=xterm
+HOME=/root
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ 
+
+
+Getting Instance IDs From AWS cli:
+ravikumarbulusu@Ravis-MacBook-Pro kube % aws ec2 describe-instances | grep "InstanceId" | awk -F ':' '{print $2}' | sed 's/^[ \t]*"//;s/",$//'
+
+i-05e2a2367b5bd04be
+i-0423d1457c4dbd87c
+i-06e37f1cb518e6219
+ravikumarbulusu@Ravis-MacBook-Pro kube % 
+
+Getting public IP address of all EC2 instances:
+
+ravikumarbulusu@Ravis-MacBook-Pro kube % aws ec2 describe-instances --query 'Reservations[*].Instances[*].[InstanceId, PublicIpAddress]' --output table
+
+-------------------------------------------
+|            DescribeInstances            |
++----------------------+------------------+
+|  i-05e2a2367b5bd04be |  18.209.4.78     |
+|  i-0423d1457c4dbd87c |  54.147.145.72   |
+|  i-06e37f1cb518e6219 |  54.164.156.132  |
++----------------------+------------------+
+ravikumarbulusu@Ravis-MacBook-Pro kube % 
+
+Public IP address for the specified instance
+aws ec2 describe-instances --instance-ids i-05e2a2367b5bd04be i-0423d1457c4dbd87c i-06e37f1cb518e6219 --query 'Reservations[*].Instances[*].PublicIpAddress' --output text
+
+ravikumarbulusu@Ravis-MacBook-Pro kube % aws ec2 describe-instances --instance-ids i-05e2a2367b5bd04be i-0423d1457c4dbd87c i-06e37f1cb518e6219 --query 'Reservations[*].Instances[*].PublicIpAddress' --output text
+18.209.4.78     54.147.145.72   54.164.156.132
+ravikumarbulusu@Ravis-MacBook-Pro kube % 
+
+
+Imperative ConfigMap:
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl create configmap my-configmap --from-literal=COLOR=BLUE --from-literal=APP_TYPE=Dev
+configmap/my-configmap created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ cat pod-env.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: simple-pod
+  labels:
+    name: simple-pod-blue
+spec:
+  containers:
+  - name: simple-app-con
+    image: nginx
+    ports:
+    - containerPort: 80
+    envFrom:
+    - configMapRef:
+        name: my-configmap
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl get configmap
+NAME               DATA   AGE
+app-config         2      9h
+kube-root-ca.crt   1      9d
+my-configmap       2      2m1s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl apply -f pod-env.yaml 
+pod/simple-pod created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl get pods
+NAME         READY   STATUS    RESTARTS   AGE
+simple-pod   1/1     Running   0          6s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ kubectl exec -it simple-pod -- printenv
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+HOSTNAME=simple-pod
+NGINX_VERSION=1.27.1
+NJS_VERSION=0.8.5
+NJS_RELEASE=1~bookworm
+PKG_RELEASE=1~bookworm
+DYNPKG_RELEASE=2~bookworm
+APP_TYPE=Dev
+COLOR=BLUE
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBERNETES_PORT_443_TCP_PORT=443
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBERNETES_SERVICE_HOST=10.96.0.1
+KUBERNETES_SERVICE_PORT=443
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_PORT=tcp://10.96.0.1:443
+TERM=xterm
+HOME=/root
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/ConfigMap$ 
+
+Secret:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl create secret generic secret1 --from-literal=DB_password=password
+secret/secret1 created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl get secret
+NAME      TYPE     DATA   AGE
+secret1   Opaque   1      51s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl describe secrets
+Name:         secret1
+Namespace:    default
+Labels:       <none>
+Annotations:  <none>
+
+Type:  Opaque
+
+Data
+====
+DB_password:  8 bytes
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl get secret secret1 -o yaml
+apiVersion: v1
+data:
+  DB_password: cGFzc3dvcmQ=
+kind: Secret
+metadata:
+  creationTimestamp: "2024-09-17T17:49:39Z"
+  name: secret1
+  namespace: default
+  resourceVersion: "185659"
+  uid: 062494a2-131d-4c85-9a41-1d401d127b9d
+type: Opaque
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ echo -n 'cGFzc3dvcmQ='|base64 --decode
+passwordubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ 
+
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ cat secret.yaml 
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+data:
+  DB_password: bXlzcWxwYXNzd29yZA==                 # Encoded format
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl apply -f secret.yaml 
+secret/app-secret created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl get secrets
+NAME         TYPE     DATA   AGE
+app-secret   Opaque   1      10s
+secret1      Opaque   1      6m53s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ cat app-secret-demo.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secret-pod-demo
+  labels:
+    name: simple-pod-green
+spec:
+  containers:
+  - name: simple-app-con
+    image: nginx
+    ports:
+    - containerPort: 80
+    envFrom:
+    - secretRef:                 # Corrected reference to 'secretRef'
+        name: app-secret
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl apply -f app-secret-demo.yaml
+pod/secret-pod-demo created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl get pods
+NAME              READY   STATUS    RESTARTS   AGE
+secret-pod-demo   1/1     Running   0          23s
+simple-pod        1/1     Running   0          82m
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl exec -it secret-pod-demo -- /bin/bash
+root@secret-pod-demo:/# env  
+KUBERNETES_SERVICE_PORT_HTTPS=443
+KUBERNETES_SERVICE_PORT=443
+HOSTNAME=secret-pod-demo
+PWD=/
+DB_password=mysqlpassword
+PKG_RELEASE=1~bookworm
+HOME=/root
+KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+DYNPKG_RELEASE=2~bookworm
+NJS_VERSION=0.8.5
+TERM=xterm
+SHLVL=1
+KUBERNETES_PORT_443_TCP_PROTO=tcp
+KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+KUBERNETES_SERVICE_HOST=10.96.0.1
+KUBERNETES_PORT=tcp://10.96.0.1:443
+KUBERNETES_PORT_443_TCP_PORT=443
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+NGINX_VERSION=1.27.1
+NJS_RELEASE=1~bookworm
+_=/usr/bin/env
+root@secret-pod-demo:/# echo $DB_Password
+
+root@secret-pod-demo:/# echo $DB_password
+mysqlpassword
+root@secret-pod-demo:/# 
+
+
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ cat app-secret-demo-volume.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-secret-demo-volume
+  labels:
+    name: simple-pod-green
+spec:
+  containers:
+  - name: simple-app-con
+    image: nginx
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: app-secret-volume
+      mountPath: /etc/secret
+  volumes:
+  - name: app-secret-volume
+    secret:
+      secretName: app-secret
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl apply -f app-secret-demo-volume.yaml 
+pod/app-secret-demo-volume created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl exec -it app-secret-demo-volume -- ls /etc/secret
+DB_password
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ kubectl exec -it app-secret-demo-volume -- cat /etc/secret/DB_password
+mysqlpasswordubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Secrets$ 
+
+Resources and Limits:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Resource_requests_limits$ cat requests-limits-pod.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-limit-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Resource_requests_limits$ kubectl apply -f requests-limits-pod.yaml 
+pod/resource-limit-pod created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Resource_requests_limits$ kubectl describe resource-limit-pod
+error: the server doesn't have a resource type "resource-limit-pod"
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Resource_requests_limits$ kubectl describe pod resource-limit-pod
+Name:             resource-limit-pod
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             k8w1/172.31.23.170
+Start Time:       Tue, 17 Sep 2024 18:14:07 +0000
+Labels:           <none>
+Annotations:      <none>
+Status:           Running
+IP:               10.44.0.4
+IPs:
+  IP:  10.44.0.4
+Containers:
+  nginx:
+    Container ID:   containerd://ed2689264f85a0e7473c6d338c4ceaf3a09e99922ae526c8bb14ff789b302fcc
+    Image:          nginx
+    Image ID:       docker.io/library/nginx@sha256:04ba374043ccd2fc5c593885c0eacddebabd5ca375f9323666f28dfd5a9710e3
+    Port:           <none>
+    Host Port:      <none>
+    State:          Running
+      Started:      Tue, 17 Sep 2024 18:14:07 +0000
+    Ready:          True
+    Restart Count:  0
+    Limits:
+      cpu:     500m
+      memory:  128Mi
+    Requests:
+      cpu:        250m
+      memory:     64Mi
+    Environment:  <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-2pk52 (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-2pk52:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   Burstable
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  28s   default-scheduler  Successfully assigned default/resource-limit-pod to k8w1
+  Normal  Pulling    28s   kubelet            Pulling image "nginx"
+  Normal  Pulled     28s   kubelet            Successfully pulled image "nginx" in 120ms (120ms including waiting). Image size: 71027698 bytes.
+  Normal  Created    28s   kubelet            Created container nginx
+  Normal  Started    28s   kubelet            Started container nginx
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Resource_requests_limits$
+
+
+Storage:
+
+In Kubernetes, persistent volumes (PVs) and persistent volume claims (PVCs) are used to manage storage resources and enable data persistence for applications.
+Persistent Volume (PV):
+A Persistent Volume (PV) represents a physical storage resource in the cluster, such as a disk on a node or a network-attached storage device.
+PVs are provisioned by the cluster administrator and exist independently of any particular pod or namespace.
+PVs have a lifecycle that is separate from the pods that use the data.
+Persistent Volume Claim (PVC):
+A Persistent Volume Claim (PVC) is a request for storage by a user or a pod. It acts as a request for a specific amount of storage with certain access modes.
+PVCs are used by developers or administrators to claim a portion of the available storage provided by the PV.
+Once a PVC is bound to a PV, the PV becomes bound to the pod that requested the storage.
+
+Volume Access modes
+Persistent Volume (PV) access modes define the ways a PV can be accessed by pods. These access modes are set on a PV and determine how the data stored in the volume can be read or written. Here are the three primary access modes in Kubernetes:
+ReadWriteOnce (RWO):
+Description: The volume can be mounted as read-write by a single node.
+Use Case: This mode is typically used for scenarios where only one pod on one node requires write access to the volume at any given time. It's suitable for applications like databases that require exclusive access to the storage.
+ReadOnlyMany (ROX):
+Description: The volume can be mounted as read-only by many nodes.
+Use Case: This mode is useful for situations where multiple pods across different nodes need read access to the same data but no write access. It is ideal for static content that does not change frequently, like configuration files or shared libraries.
+
+ReadWriteMany (RWX):
+Description: The volume can be mounted as read-write by many nodes.
+Use Case: This mode allows multiple pods across different nodes to read and write to the volume simultaneously. It is suitable for distributed applications that require shared access to the same data, like content management systems, or for shared development environments.
+Reclaim Policies:
+Reclaim Policy Overview
+Persistent Volume (PV):
+Purpose: The reclaimPolicy on a PV specifies what happens to the PV after the associated PVC is deleted. It determines the fate of the storage resource once the claim is no longer in use.
+Possible Values:
+Delete: When the PVC is deleted, the PV and the underlying storage resource (e.g., an AWS EBS volume) are also deleted automatically.
+Retain: When the PVC is deleted, the PV is not deleted. It remains in the Released state and can be manually cleaned up or reused. The underlying storage resource remains intact.
+Reclaims policies would be set at PV or Storage Class
+3. Using AWS EBS Volumes with CSI Driver
+AWS EBS Volumes: Persistent volumes in Kubernetes that use Amazon EBS for durable and high-performance block storage. Data persists across pod restarts and is not tied to the lifecycle of a pod.
+EBS CSI Drivers have to be installed on to k8 Server In order to use EBS Volumes as storage for your servers
+
+Statefulsets:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ cat headlessservice.yaml 
+apiVersion: v1
+kind: Service
+metadata:
+  name: headless-svc
+spec:
+  ports:
+  - port: 5432  # PostgreSQL default port
+    name: postgres
+  clusterIP: None
+  selector:
+    app: postgres-db
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ cat stateful.yaml 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-db
+spec:
+  serviceName: headless-svc
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgres-db
+  template:
+    metadata:
+      labels:
+        app: postgres-db
+    spec:
+      containers:
+      - name: postgres-container
+        image: postgres:latest  # Adjust the image and tag as needed
+        ports:
+        - containerPort: 5432  # PostgreSQL default port
+        env:
+        - name: POSTGRES_DB
+          value: postgresdb  # Replace with your desired database name
+        - name: POSTGRES_USER
+          value: postgres  # Replace with your desired username
+        - name: POSTGRES_PASSWORD
+          value: postgres  # Replace with your desired password
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - name: data-volume
+          mountPath: /var/lib/postgresql/data  # Adjust the path as needed
+  volumeClaimTemplates:
+  - metadata:
+      name: data-volume
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: ebs-sc  # Adjust the storage class as needed
+      resources:
+        requests:
+          storage: 2Gi  # Adjust the storage size as needed
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ 
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl apply -f headlessservice.yaml 
+service/headless-svc created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl apply -f stateful.yaml 
+statefulset.apps/postgres-db created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl api-resources | grep -i stateful
+statefulsets                        sts          apps/v1                           true         StatefulSet
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get statefulsets
+NAME          READY   AGE
+postgres-db   3/3     103s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get sts
+NAME          READY   AGE
+postgres-db   3/3     109s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get pvc
+NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-volume-postgres-db-0   Bound    pvc-ea8f1a5b-75b2-4fb1-86d0-83df4daa8027   2Gi        RWO            ebs-sc         <unset>                 117s
+data-volume-postgres-db-1   Bound    pvc-51d798cd-e0fd-4472-b5eb-e05e2882bd57   2Gi        RWO            ebs-sc         <unset>                 105s
+data-volume-postgres-db-2   Bound    pvc-ec86cc44-2492-4447-9024-c52f75a86e2a   2Gi        RWO            ebs-sc         <unset>                 92s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                               STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+pvc-51d798cd-e0fd-4472-b5eb-e05e2882bd57   2Gi        RWO            Delete           Bound    default/data-volume-postgres-db-1   ebs-sc         <unset>                          113s
+pvc-ea8f1a5b-75b2-4fb1-86d0-83df4daa8027   2Gi        RWO            Delete           Bound    default/data-volume-postgres-db-0   ebs-sc         <unset>                          2m5s
+pvc-ec86cc44-2492-4447-9024-c52f75a86e2a   2Gi        RWO            Delete           Bound    default/data-volume-postgres-db-2   ebs-sc         <unset>                          100s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get deploy
+No resources found in default namespace.
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get pods
+NAME            READY   STATUS    RESTARTS      AGE
+postgres-db-0   1/1     Running   0             2m36s
+postgres-db-1   1/1     Running   0             2m24s
+postgres-db-2   1/1     Running   0             2m11s
+simple-pod      1/1     Running   1 (33m ago)   37h
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl delete pods simple-pod
+pod "simple-pod" deleted
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl delete pod postgres-db-1
+pod "postgres-db-1" deleted
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get pods
+NAME            READY   STATUS              RESTARTS   AGE
+postgres-db-0   1/1     Running             0          3m44s
+postgres-db-1   0/1     ContainerCreating   0          6s
+postgres-db-2   1/1     Running             0          3m19s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get pods
+NAME            READY   STATUS    RESTARTS   AGE
+postgres-db-0   1/1     Running   0          3m56s
+postgres-db-1   1/1     Running   0          18s
+postgres-db-2   1/1     Running   0          3m31s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl exec -it postgres-db-1 -- /bin/bash
+root@postgres-db-1:/# df -h
+Filesystem      Size  Used Avail Use% Mounted on
+overlay         6.8G  4.3G  2.5G  64% /
+tmpfs            64M     0   64M   0% /dev
+/dev/root       6.8G  4.3G  2.5G  64% /etc/hosts
+shm              64M  1.1M   63M   2% /dev/shm
+/dev/xvdab      2.0G   46M  1.9G   3% /var/lib/postgresql/data
+tmpfs           3.8G   12K  3.8G   1% /run/secrets/kubernetes.io/serviceaccount
+tmpfs           2.0G     0  2.0G   0% /proc/acpi
+tmpfs           2.0G     0  2.0G   0% /proc/scsi
+tmpfs           2.0G     0  2.0G   0% /sys/firmware
+root@postgres-db-1:/# touch f1
+root@postgres-db-1:/# 
+root@postgres-db-1:/# 
+root@postgres-db-1:/# ls
+bin   dev			  etc  home  lib64  mnt  proc  run   srv  tmp  var
+boot  docker-entrypoint-initdb.d  f1   lib   media  opt  root  sbin  sys  usr
+root@postgres-db-1:/# 
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ kubectl get sc
+NAME     PROVISIONER       RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+ebs-sc   ebs.csi.aws.com   Delete          WaitForFirstConsumer   false                  11m
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/statefulset$ 
+
+Deploying Metrics Server:
+
+Deploying Metrics Server on to k8 Cluster to see Resource Utilization
+wget https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+mv components.yaml metrics-server.yaml
+vi metrics-server.yaml
+Incorporate below lines as per screeshot under Deployment object and save the file
+Search for containers and add below lines:
+
+command:
+﻿﻿/metrics-server
+﻿﻿--kubelet-insecure-tls
+---kubelet-preferred-address-types=InternallP
+
+Example:
+    spec:
+      containers:
+      - args:
+        - --cert-dir=/tmp
+        - --secure-port=10250
+        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname
+        - --kubelet-use-node-status-port
+        - --metric-resolution=15s
+        command:
+        - /metrics-server
+        - --kubelet-insecure-tls
+        - --kubelet-preferred-address-types=InternallP
+        image: registry.k8s.io/metrics-server/metrics-server:v0.7.2
+
+HPA:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ cat README.md 
+Run kubectl get events -- Where we can check initially we would have deployed few replication based on our requirement, later based on the load, hpa would act accordingly whether to bring up
+new pods / kill the existing pods
+
+![HPA-1](https://github.com/venugopalsgnew/kubernetes-training/blob/master/k8-manifests/Images/HPA-1.jpeg)
+
+
+
+![HPA-2](https://github.com/venugopalsgnew/kubernetes-training/blob/master/k8-manifests/Images/HPA-2.jpeg)
+
+
+
+![hpa-memory-reference](https://github.com/venugopalsgnew/kubernetes-training/blob/master/k8-manifests/Images/hpa_memory_reference.png)
+
+
+**How to test hpa upon deploying metrics server, deployment and hpa**
+
+
+kubectl get pods
+
+kubectl top pods
+
+kubectl get hpa
+
+kubectl exec -it nginx-deployment1-68dcf48475-cghpw -- /bin/bash
+
+apt update
+
+apt install stress
+
+
+Run Stress: Once installed, you can use stress to consume memory. Here's a basic command to stress the memory:
+
+stress --vm 1 --vm-bytes 512M --vm-keep -m 1
+
+This command tells stress to allocate 512MB of memory (--vm-bytes 512M) and keep it allocated (--vm-keep). Adjust the memory size as needed.
+
+Observe Behavior: Once you start the stress test, monitor the memory usage within your pod and observe the behavior of the Horizontal Pod Autoscaler (HPA). 
+As memory consumption increases, HPA should scale out new pods if configured correctly.
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ ls
+README.md  deploy.yaml  horizontalpodautoscaler_memory.yaml
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl apply -f deploy.yaml 
+deployment.apps/nginx-deployment1 created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl get deploy
+NAME                READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment1   3/3     3            3           6s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl apply -f horizontalpodautoscaler_memory.yaml 
+horizontalpodautoscaler.autoscaling/myapp-hpa created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl get hpa
+NAME        REFERENCE                      TARGETS                 MINPODS   MAXPODS   REPLICAS   AGE
+myapp-hpa   Deployment/nginx-deployment1   memory: <unknown>/50%   1         10        0          7s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl get pods
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment1-f7748cfd9-gp6bl   1/1     Running   0          51s
+nginx-deployment1-f7748cfd9-pp26k   1/1     Running   0          51s
+nginx-deployment1-f7748cfd9-t87gt   1/1     Running   0          51s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl exec -it nginx-deployment1-f7748cfd9-gp6bl -- /bin/bash
+root@nginx-deployment1-f7748cfd9-gp6bl:/# apt update
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8787 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [2468 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [182 kB]
+Fetched 9226 kB in 3s (3520 kB/s)                    
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+1 package can be upgraded. Run 'apt list --upgradable' to see it.
+root@nginx-deployment1-f7748cfd9-gp6bl:/# apt install stress
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following NEW packages will be installed:
+  stress
+0 upgraded, 1 newly installed, 0 to remove and 1 not upgraded.
+Need to get 21.9 kB of archives.
+After this operation, 57.3 kB of additional disk space will be used.
+Get:1 http://deb.debian.org/debian bookworm/main amd64 stress amd64 1.0.7-1 [21.9 kB]
+Fetched 21.9 kB in 0s (758 kB/s)   
+debconf: delaying package configuration, since apt-utils is not installed
+Selecting previously unselected package stress.
+(Reading database ... 7580 files and directories currently installed.)
+Preparing to unpack .../stress_1.0.7-1_amd64.deb ...
+Unpacking stress (1.0.7-1) ...
+Setting up stress (1.0.7-1) ...
+root@nginx-deployment1-f7748cfd9-gp6bl:/# stress --vm 1 --vm-bytes 512M --vm-keep -m 1
+stress: info: [153] dispatching hogs: 0 cpu, 0 io, 1 vm, 0 hdd
+command terminated with exit code 137
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ kubectl get pods
+NAME                                READY   STATUS    RESTARTS      AGE
+nginx-deployment1-f7748cfd9-gp6bl   1/1     Running   1 (22s ago)   3m25s
+nginx-deployment1-f7748cfd9-pp26k   1/1     Running   0             3m25s
+nginx-deployment1-f7748cfd9-t87gt   1/1     Running   0             3m25s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ cat deploy.yaml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment1
+  labels:
+    app: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ cat horizontalpodautoscaler_memory.yaml 
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: myapp-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment1 
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 50
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/HPA$ 
+
+Liveness Probe & Readiness probe:
+
+Readiness Probe: Checks if a container is ready to accept traffic. If the readiness probe fails, the container is removed from the service endpoints.
+Liveness Probe: Checks if a container is still running. If the liveness probe fails, Kubernetes restarts the container.
+Why Use Probes?
+Readiness Probes: Ensure that your application is fully initialized and ready to serve requests before sending traffic to it.
+Liveness Probes: Detect and remedy unresponsive or crashed containers by restarting them.
+
+Readiness Probe: Ensures the application is ready to serve traffic. If it fails, the container is temporarily removed from the service endpoints until it is ready again.
+Liveness Probe: Ensures the application is running correctly. If it fails, Kubernetes restarts the container to restore functionality.
+Using readiness and liveness probes helps maintain the reliability and availability of your applications in Kubernetes by ensuring they are running and ready to serve traffic as expected.
+
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ cat liveness_readiness_probe.yaml 
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-probes
+spec:
+  containers:
+  - name: demo-container
+    image: nginx
+    ports:
+    - containerPort: 80
+    readinessProbe:
+      httpGet:
+        path: /index.html
+        port: 80
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    livenessProbe:
+      httpGet:
+        path: /index.html
+        port: 80
+      initialDelaySeconds: 15
+      periodSeconds: 20
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ kubectl apply -f liveness_readiness_probe.yaml 
+pod/demo-probes created
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ kubectl get pods
+NAME          READY   STATUS    RESTARTS   AGE
+demo-probes   0/1     Running   0          6s
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ kubectl get deploy
+No resources found in default namespace.
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ kubectl exec -it demo-probes -- /bin/bash
+root@demo-probes:/# ls /usr/share/nginx/html
+50x.html  index.html
+root@demo-probes:/#
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ kubectl describe pods demo-probes
+Name:             demo-probes
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             k8w1/172.31.23.170
+Start Time:       Thu, 19 Sep 2024 09:58:46 +0000
+Labels:           <none>
+Annotations:      <none>
+Status:           Running
+IP:               10.44.0.2
+IPs:
+  IP:  10.44.0.2
+Containers:
+  demo-container:
+    Container ID:   containerd://13eed4f6d983b1b4f0fe85486e7fc3f52126da669a6098c64c2dea2fef9c3feb
+    Image:          nginx
+    Image ID:       docker.io/library/nginx@sha256:04ba374043ccd2fc5c593885c0eacddebabd5ca375f9323666f28dfd5a9710e3
+    Port:           80/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Thu, 19 Sep 2024 09:58:47 +0000
+    Ready:          True
+    Restart Count:  0
+    Liveness:       http-get http://:80/index.html delay=15s timeout=1s period=20s #success=1 #failure=3
+    Readiness:      http-get http://:80/index.html delay=5s timeout=1s period=5s #success=1 #failure=3
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-w5wgl (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-w5wgl:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age    From               Message
+  ----    ------     ----   ----               -------
+  Normal  Scheduled  4m58s  default-scheduler  Successfully assigned default/demo-probes to k8w1
+  Normal  Pulling    4m57s  kubelet            Pulling image "nginx"
+  Normal  Pulled     4m57s  kubelet            Successfully pulled image "nginx" in 110ms (110ms including waiting). Image size: 71027698 bytes.
+  Normal  Created    4m57s  kubelet            Created container demo-container
+  Normal  Started    4m57s  kubelet            Started container demo-container
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/liveness_readiness$ 
+
+
+
+JOBS and Cron Jobs:
+
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Job$ cat Job.yaml 
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-download-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: s3-downloader
+        image: amazon/aws-cli:latest
+        command: ["sh", "-c"]
+        args:
+          - aws s3 sync s3://s3-buck/ /tmp/ --region us-east-1;
+            echo "Download complete"
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: AWS_ACCESS_KEY_ID
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: aws-credentials
+                key: AWS_SECRET_ACCESS_KEY
+        volumeMounts:
+        - name: hostpath
+          mountPath: /tmp
+      restartPolicy: OnFailure
+      volumes:
+      - name: hostpath
+        hostPath:
+          path: /tmp
+          type: Directory
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Job$ cat secret_aws_s3.yaml 
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aws-credentials
+type: Opaque
+data:
+  AWS_ACCESS_KEY_ID: QUtJQTVXTFRUTTNTS1  # Encoded  Access key
+  AWS_SECRET_ACCESS_KEY: SEdxdGlURUZFMkJSMmV6YU90V05x  # Encoded Secret Key
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Job$ cat CronJob.yaml 
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s3-download-cronjob
+spec:
+  schedule: "0 * * * *"  # Runs every hour at the start of the hour
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: s3-downloader
+            image: amazon/aws-cli:latest
+            command: ["sh", "-c"]
+            args:
+              - aws s3 sync s3://s3bucket-temp-kodecraft/test_folder/ /hostpath/data --region ap-southeast-1;
+                echo "Download complete"
+            env:
+              - name: AWS_ACCESS_KEY_ID
+                valueFrom:
+                  secretKeyRef:
+                    name: aws-credentials
+                    key: AWS_ACCESS_KEY_ID
+              - name: AWS_SECRET_ACCESS_KEY
+                valueFrom:
+                  secretKeyRef:
+                    name: aws-credentials
+                    key: AWS_SECRET_ACCESS_KEY
+            volumeMounts:
+            - name: hostpath
+              mountPath: /hostpath/data
+          restartPolicy: OnFailure
+          volumes:
+          - name: hostpath
+            hostPath:
+              path: /hostpath/data
+              type: Directory
+ubuntu@k8s:~/venu/kubernetes-training/k8-manifests/Job$ 
+
+
+HELM:
+
+Chart Management: 
+helm create <name>                      # Creates a chart directory along with the common files and directories used in a chart.
+
+helm package <chart-path>               # Packages a chart into a versioned chart archive file.
+
+helm lint <chart>                       # Run tests to examine a chart and identify possible issues:
+
+helm show all <chart>                   # Inspect a chart and list its contents:
+
+helm show values <chart>                # Displays the contents of the values.yaml file
+
+helm pull <chart>                       # Download/pull chart 
+
+helm pull <chart> --untar=true          # If set to true, will untar the chart after downloading it
+
+helm pull <chart> --verify              # Verify the package before using it
+
+helm pull <chart> --version <number>    # Default-latest is used, specify a version constraint for the chart version to use
+
+helm dependency list <chart>            # Display a list of a chart’s dependencies:
+
+Install and Uninstall Apps:
+helm install <name> <chart>                           # Install the chart with a name
+
+helm install <name> <chart> --namespace <namespace>   # Install the chart in a specific namespace
+
+helm install <name> <chart> --set key1=val1,key2=val2 # Set values on the command line (can specify multiple or separate values with commas)
+
+helm install <name> <chart> --values <yaml-file/url>  # Install the chart with your specified values
+
+helm install <name> <chart> --dry-run --debug         # Run a test installation to validate chart (p)
+
+helm install <name> <chart> --verify                  # Verify the package before using it 
+
+helm install <name> <chart> --dependency-update       # update dependencies if they are missing before installing the chart
+
+helm uninstall <name>                                 # Uninstall a release
+
+Perform App Upgrade and Rollback:
+helm upgrade <release> <chart>                            # Upgrade a release
+
+helm upgrade <release> <chart> --atomic                   # If set, upgrade process rolls back changes made in case of failed upgrade.
+
+helm upgrade <release> <chart> --dependency-update        # update dependencies if they are missing before installing the chart
+
+helm upgrade <release> <chart> --version <version_number> # specify a version constraint for the chart version to use
+
+helm upgrade <release> <chart> --values                   # specify values in a YAML file or a URL (can specify multiple)
+
+helm upgrade <release> <chart> --set key1=val1,key2=val2  # Set values on the command line (can specify multiple or separate valuese)
+
+helm upgrade <release> <chart> --force                    # Force resource updates through a replacement strategy
+
+helm rollback <release> <revision>                        # Roll back a release to a specific revision
+
+helm rollback <release> <revision>  --cleanup-on-fail     # Allow deletion of new resources created in this rollback when rollback fails
+
+List, Add, Remove, and Update repositories:
+helm repo add <repo-name> <url>   # Add a repository from the internet:
+
+helm repo list                    # List added chart repositories
+
+helm repo update                  # Update information of available charts locally from chart repositories
+
+helm repo remove <repo_name>      # Remove one or more chart repositories
+
+helm repo index <DIR>             # Read the current directory and generate an index file based on the charts found.
+
+helm repo index <DIR> --merge     # Merge the generated index with an existing index file
+
+helm search repo <keyword>        # Search repositories for a keyword in charts
+
+helm search hub <keyword>         # Search for charts in the Artifact Hub or your own hub instance
+
+Helm Release monitoring:
+helm list                       # Lists all of the releases for a specified namespace, uses current namespace context if namespace not specified
+
+helm list --all                 # Show all releases without any filter applied, can use -a
+
+helm list --all-namespaces      # List releases across all namespaces, we can use -A
+
+helm list -l key1=value1,key2=value2 # Selector (label query) to filter on, supports '=', '==', and '!='
+
+helm list --date                # Sort by release date
+
+helm list --deployed            # Show deployed releases. If no other is specified, this will be automatically enabled
+
+helm list --pending             # Show pending releases
+
+helm list --failed              # Show failed releases
+
+helm list --uninstalled         # Show uninstalled releases (if 'helm uninstall --keep-history' was used)
+
+helm list --superseded          # Show superseded releases
+
+helm list -o yaml               # Prints the output in the specified format. Allowed values: table, json, yaml (default table)
+
+helm status <release>           # This command shows the status of a named release.
+
+helm status <release> --revision <number>   # if set, display the status of the named release with revision
+
+helm history <release>          # Historical revisions for a given release.
+
+helm env                        # Env prints out all the environment information in use by Helm.
+
+Download Release Information:
+helm get all <release>      # A human readable collection of information about the notes, hooks, supplied values, and generated manifest file of the given release.
+
+helm get hooks <release>    # This command downloads hooks for a given release. Hooks are formatted in YAML and separated by the YAML '---\n' separator.
+
+helm get manifest <release> # A manifest is a YAML-encoded representation of the Kubernetes resources that were generated from this release's chart(s). If a chart is dependent on other charts, those resources will also be included in the manifest.
+
+helm get notes <release>    # Shows notes provided by the chart of a named release.
+
+helm get values <release>   # Downloads a values file for a given release. use -o to format output
+
+Helm is a package manager for Kubernetes applications, you can package your applications as a Helm Chart, and then install, update, and roll back your Kubernetes applications using Helm
+
+Helm uses a packaging format called charts
+
+A Helm chart is a collection of pre-configured Kubernetes resources.
+
+Definition: A Helm chart is a collection of files that describes a related set of Kubernetes resources.
+Components:
+Templates: Define Kubernetes resources (Deployments, Services, ConfigMaps) using a templating language.
+Values.yaml: Provides default configuration values for the templates. Users can override these values during installation or upgrades.
+Chart.yaml: Contains metadata about the chart, such as name, version, and description.
+
+Requirements.yaml (optional): Lists other charts that are dependencies for this chart.
+
+README.md (optional): Provides documentation about the chart and its usage.
+
+Helm Repository (Helm Repo):
+Definition: A Helm repository is a place where Helm charts are stored and shared.
+Components:
+Index.yaml: A file that contains information about all charts in the repository, including metadata and versions.
+Charts: Packaged Helm charts that can be installed or upgraded.
+Types:
+Public Repositories: Like the official Helm Hub, where you can find a wide range of community and official charts.
+Private Repositories: Managed by organizations or individuals for internal use or specific needs.
+Commands:
+helm repo add <repo-name> <repo-url>: Adds a Helm repository to your Helm client.
+helm repo update: Updates the local cache with the latest information from all added repositories.
+helm search repo < search-term>: Searches for charts in the repositories you've added.
+Helm Release:
+Definition: An instance of a Helm chart that is deployed onto a Kubernetes cluster.
+Creation: Generated when you install a Helm chart using Helm commands.
+Identification: Each release has a unique name for management.
+Management Commands:
+helm install <release-name> <chart>: Installs a chart as a new release.
+helm upgrade <release-name> <chart>: Upgrades an existing release to a new version of the chart.
+helm rollback <release-name> ‹revision>: Rolls back a release to a previous revision.
+helm uninstall <release-name>: Deletes a release from the cluster
+Purpose: Manages the lifecycle of applications on Kubernetes, including installation, updates, and removal.
+Summary:
+Helm Chart: Blueprint for your application.
+Helm Repository: Collection of Helm charts (blueprints).
+Helm Release: Actual deployment of a chart onto a Kubernetes cluster.
+
+ubuntu@k8s:~$ helm create mynginxapp
+Creating mynginxapp
+ubuntu@k8s:~$ ls
+get_helm.sh  metrics-server.yaml  mynginxapp  venu
+ubuntu@k8s:~$ tree mynginxapp
+mynginxapp
+├── Chart.yaml
+├── charts
+├── templates
+│   ├── NOTES.txt
+│   ├── _helpers.tpl
+│   ├── deployment.yaml
+│   ├── hpa.yaml
+│   ├── ingress.yaml
+│   ├── service.yaml
+│   ├── serviceaccount.yaml
+│   └── tests
+│       └── test-connection.yaml
+└── values.yaml
+
+4 directories, 10 files
+ubuntu@k8s:~$ cd mynginxapp
+ubuntu@k8s:~/mynginxapp$ cat Chart.yaml 
+apiVersion: v2
+name: mynginxapp
+description: A Helm chart for Kubernetes
+
+# A chart can be either an 'application' or a 'library' chart.
+#
+# Application charts are a collection of templates that can be packaged into versioned archives
+# to be deployed.
+#
+# Library charts provide useful utilities or functions for the chart developer. They're included as
+# a dependency of application charts to inject those utilities and functions into the rendering
+# pipeline. Library charts do not define any templates and therefore cannot be deployed.
+type: application
+
+# This is the chart version. This version number should be incremented each time you make changes
+# to the chart and its templates, including the app version.
+# Versions are expected to follow Semantic Versioning (https://semver.org/)
+version: 0.1.0
+
+# This is the version number of the application being deployed. This version number should be
+# incremented each time you make changes to the application. Versions are not expected to
+# follow Semantic Versioning. They should reflect the version the application is using.
+# It is recommended to use it with quotes.
+appVersion: "1.16.0"
+ubuntu@k8s:~/mynginxapp$ cat values.yaml 
+# Default values for mynginxapp.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+replicaCount: 1
+
+# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+image:
+  repository: nginx
+  # This sets the pull policy for images.
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+#This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# This is for setting Kubernetes Annotations to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/ 
+podAnnotations: {}
+# This is for setting Kubernetes Labels to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+service:
+  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  type: ClusterIP
+  # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
+  port: 80
+
+# This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+#This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+ubuntu@k8s:~/mynginxapp$ cd templates
+ubuntu@k8s:~/mynginxapp/templates$ rm -rf *
+ubuntu@k8s:~/mynginxapp/templates$ cat deploy.yaml 
+apiVersion: apps/v1
+
+kind: Deployment
+
+metadata:
+
+  name: nginx-deployment
+
+  labels:
+
+    app: nginx
+
+spec:
+
+  replicas: 3
+
+  selector:
+
+    matchLabels:
+
+      app: nginx
+
+  template:
+
+    metadata:
+
+      labels:
+
+        app: nginx
+
+    spec:
+
+      containers:
+
+      - name: nginx
+
+        image: nginx:1.14.2
+
+        ports:
+
+        - containerPort: 80
+ubuntu@k8s:~/mynginxapp/templates$ cat service.yaml 
+apiVersion: v1
+
+kind: Service
+
+metadata:
+
+  name: my-service
+
+spec:
+
+  selector:
+
+    app: nginx
+
+  ports:
+
+    - protocol: TCP
+
+      port: 80
+
+      targetPort: 9376
+ubuntu@k8s:~/mynginxapp/templates$ kubectl get svc
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   11d
+ubuntu@k8s:~/mynginxapp/templates$ kubectl get deploy
+No resources found in default namespace.
+ubuntu@k8s:~/mynginxapp/templates$ ls
+deploy.yaml  service.yaml
+ubuntu@k8s:~/mynginxapp/templates$ helm ls
+NAME	NAMESPACE	REVISION	UPDATED	STATUS	CHART	APP VERSION
+ubuntu@k8s:~/mynginxapp/templates$ cd ..
+ubuntu@k8s:~/mynginxapp$ ls
+Chart.yaml  charts  templates  values.yaml
+ubuntu@k8s:~/mynginxapp$ helm install myapp .
+NAME: myapp
+LAST DEPLOYED: Thu Sep 19 17:34:08 2024
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+TEST SUITE: None
+ubuntu@k8s:~/mynginxapp$ kubectl get deploy
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           21s
+ubuntu@k8s:~/mynginxapp$ kubectl get svc
+NAME         TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1      <none>        443/TCP   11d
+my-service   ClusterIP   10.106.92.43   <none>        80/TCP    27s
+ubuntu@k8s:~/mynginxapp$ helm ls
+NAME 	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART           APP VERSION
+myapp	default  	1       	2024-09-19 17:34:08.801675798 +0000 UTC	deployed	mynginxapp-0.1.01.16.0     
+ubuntu@k8s:~/mynginxapp$ kubectl get pods
+NAME                               READY   STATUS    RESTARTS   AGE
+nginx-deployment-d556bf558-bqdd2   1/1     Running   0          9m4s
+nginx-deployment-d556bf558-nbq7p   1/1     Running   0          9m4s
+nginx-deployment-d556bf558-nfpmq   1/1     Running   0          9m4s
+ubuntu@k8s:~/mynginxapp$ kubectl describe pods nginx-deployment-d556bf558-bqdd2 
+Name:             nginx-deployment-d556bf558-bqdd2
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             k8w1/172.31.23.170
+Start Time:       Thu, 19 Sep 2024 17:34:09 +0000
+Labels:           app=nginx
+                  pod-template-hash=d556bf558
+Annotations:      <none>
+Status:           Running
+IP:               10.44.0.4
+IPs:
+  IP:           10.44.0.4
+Controlled By:  ReplicaSet/nginx-deployment-d556bf558
+Containers:
+  nginx:
+    Container ID:   containerd://1beff5ddcef63726ae9fc817d5e4a6f7bb36f2e5036b3ea699604d1b7e0ab7de
+    Image:          nginx:1.14.2
+    Image ID:       docker.io/library/nginx@sha256:f7988fb6c02e0ce69257d9bd9cf37ae20a60f1df7563c3a2a6abe24160306b8d
+    Port:           80/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Thu, 19 Sep 2024 17:34:12 +0000
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-vj654 (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-vj654:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age    From               Message
+  ----    ------     ----   ----               -------
+  Normal  Scheduled  9m38s  default-scheduler  Successfully assigned default/nginx-deployment-d556bf558-bqdd2 to k8w1
+  Normal  Pulling    9m38s  kubelet            Pulling image "nginx:1.14.2"
+  Normal  Pulled     9m35s  kubelet            Successfully pulled image "nginx:1.14.2" in 126ms (2.873s including waiting). Image size: 44710204 bytes.
+  Normal  Created    9m35s  kubelet            Created container nginx
+  Normal  Started    9m35s  kubelet            Started container nginx
+ubuntu@k8s:~/mynginxapp$ cat deploy.yaml 
+apiVersion: apps/v1
+
+kind: Deployment
+
+metadata:
+
+  name: nginx-deployment
+
+  labels:
+
+    app: nginx
+
+spec:
+
+  replicas: 3
+
+  selector:
+
+    matchLabels:
+
+      app: nginx
+
+  template:
+
+    metadata:
+
+      labels:
+
+        app: nginx
+
+    spec:
+
+      containers:
+
+      - name: nginx
+
+        image: {{.Values.image.repository}}
+
+        ports:
+
+        - containerPort: 80
+ubuntu@k8s:~/mynginxapp$ cat values.yaml 
+# Default values for mynginxapp.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+replicaCount: 1
+
+# This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+image:
+  repository: nginx
+  # This sets the pull policy for images.
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+# This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+imagePullSecrets: []
+# This is to override the chart name.
+nameOverride: ""
+fullnameOverride: ""
+
+#This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+# This is for setting Kubernetes Annotations to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/ 
+podAnnotations: {}
+# This is for setting Kubernetes Labels to a Pod.
+# For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+podLabels: {}
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+service:
+  # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
+  type: ClusterIP
+  # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
+  port: 80
+
+# This block is for setting up the ingress for more information can be found here: https://kubernetes.io/docs/concepts/services-networking/ingress/
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+resources: {}
+  # We usually recommend not to specify default resources and to leave this as a conscious
+  # choice for the user. This also increases chances charts run on environments with little
+  # resources, such as Minikube. If you do want to specify resources, uncomment the following
+  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 100m
+  #   memory: 128Mi
+
+# This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+
+#This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 100
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+ubuntu@k8s:~/mynginxapp$ 
+
+ubuntu@k8s:~/mynginxapp/templates$ helm ls
+NAME 	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART           APP VERSION
+myapp	default  	1       	2024-09-19 17:34:08.801675798 +0000 UTC	deployed	mynginxapp-0.1.01.16.0     
+ubuntu@k8s:~/mynginxapp/templates$ ls
+deploy.yaml  service.yaml
+ubuntu@k8s:~/mynginxapp/templates$ helm upgrade --install myapp .
+Release "myapp" has been upgraded. Happy Helming!
+NAME: myapp
+LAST DEPLOYED: Thu Sep 19 18:09:15 2024
+NAMESPACE: default
+STATUS: deployed
+REVISION: 2
+TEST SUITE: None
+ubuntu@k8s:~/mynginxapp$ helm ls
+NAME 	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART           APP VERSION
+myapp	default  	2       	2024-09-19 18:09:15.981884212 +0000 UTC	deployed	mynginxapp-0.1.01.16.0     
+ubuntu@k8s:~/mynginxapp$ helm history myapp
+REVISION	UPDATED                 	STATUS    	CHART           	APP VERSION	DESCRIPTION     
+1       	Thu Sep 19 17:34:08 2024	superseded	mynginxapp-0.1.0	1.16.0     	Install complete
+2       	Thu Sep 19 18:09:15 2024	deployed  	mynginxapp-0.1.0	1.16.0     	Upgrade complete
+ubuntu@k8s:~/mynginxapp$ kubectl describe pods nginx-deployment-689b9b776b-58f54
+Name:             nginx-deployment-689b9b776b-58f54
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             k8w1/172.31.23.170
+Start Time:       Thu, 19 Sep 2024 18:09:19 +0000
+Labels:           app=nginx
+                  pod-template-hash=689b9b776b
+Annotations:      <none>
+Status:           Running
+IP:               10.44.0.3
+IPs:
+  IP:           10.44.0.3
+Controlled By:  ReplicaSet/nginx-deployment-689b9b776b
+Containers:
+  nginx:
+    Container ID:   containerd://134d024b11da363af4317b1761ee6b54217d2a057eef533789e8d097d828c177
+    Image:          nginx
+    Image ID:       docker.io/library/nginx@sha256:04ba374043ccd2fc5c593885c0eacddebabd5ca375f9323666f28dfd5a9710e3
+    Port:           80/TCP
+    Host Port:      0/TCP
+    State:          Running
+      Started:      Thu, 19 Sep 2024 18:09:19 +0000
+    Ready:          True
+    Restart Count:  0
+    Environment:    <none>
+    Mounts:
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-47r56 (ro)
+Conditions:
+  Type                        Status
+  PodReadyToStartContainers   True 
+  Initialized                 True 
+  Ready                       True 
+  ContainersReady             True 
+  PodScheduled                True 
+Volumes:
+  kube-api-access-47r56:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+QoS Class:                   BestEffort
+Node-Selectors:              <none>
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type    Reason     Age    From               Message
+  ----    ------     ----   ----               -------
+  Normal  Scheduled  4m55s  default-scheduler  Successfully assigned default/nginx-deployment-689b9b776b-58f54 to k8w1
+  Normal  Pulled     4m55s  kubelet            Container image "nginx" already present on machine
+  Normal  Created    4m55s  kubelet            Created container nginx
+  Normal  Started    4m55s  kubelet            Started container nginx
+ubuntu@k8s:~/mynginxapp$ helm rollback myapp 1
+Rollback was a success! Happy Helming!
+ubuntu@k8s:~/mynginxapp$ helm ls 
+NAME 	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART           APP VERSION
+myapp	default  	3       	2024-09-19 18:17:20.050095955 +0000 UTC	deployed	mynginxapp-0.1.01.16.0     
+ubuntu@k8s:~/mynginxapp$ kubectl get pods
+NAME                               READY   STATUS    RESTARTS   AGE
+nginx-deployment-d556bf558-5wcxp   1/1     Running   0          51s
+nginx-deployment-d556bf558-hpght   1/1     Running   0          52s
+nginx-deployment-d556bf558-hr96t   1/1     Running   0          53s
+ubuntu@k8s:~/mynginxapp$ kubectl describe pods nginx-deployment-d556bf558-hpght | grep -i image
+    Image:          nginx:1.14.2
+    Image ID:       docker.io/library/nginx@sha256:f7988fb6c02e0ce69257d9bd9cf37ae20a60f1df7563c3a2a6abe24160306b8d
+  Normal  Pulled     82s   kubelet            Container image "nginx:1.14.2" already present on machine
+ubuntu@k8s:~/mynginxapp$ helm delete myapp
+release "myapp" uninstalled
+ubuntu@k8s:~/mynginxapp$ kubectl get deploy
+No resources found in default namespace.
+ubuntu@k8s:~/mynginxapp$ kubectl get svc
+'NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   11d
+ubuntu@k8s:~/mynginxapp$ 
+To change the replica count during the installation stage:
+Helm install myapp —name myapp -f values.yaml —set replicaCount=5
+
+Upgrade a Chart with Production Values:
+Helm upgrade myapp mychart/ -f values-prod.yaml
+
+
+ARGOCD:
+
+Kubectl create ns argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+ubuntu@k8s:~$ kubectl get all -n argocd
+NAME                                                    READY   STATUS    RESTARTS   AGE
+pod/argocd-application-controller-0                     1/1     Running   0          65s
+pod/argocd-applicationset-controller-5b866bf4f7-wnd5z   1/1     Running   0          66s
+pod/argocd-dex-server-7b6987df7-6wx6c                   1/1     Running   0          66s
+pod/argocd-notifications-controller-5ddc4fdfb9-wcsqp    1/1     Running   0          66s
+pod/argocd-redis-ffccd77b9-2842d                        1/1     Running   0          66s
+pod/argocd-repo-server-55bb7b784-7n566                  1/1     Running   0          66s
+pod/argocd-server-7c746df554-79jgr                      1/1     Running   0          66s
+
+NAME                                              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+service/argocd-applicationset-controller          ClusterIP   10.110.94.205   <none>        7000/TCP,8080/TCP            66s
+service/argocd-dex-server                         ClusterIP   10.102.26.37    <none>        5556/TCP,5557/TCP,5558/TCP   66s
+service/argocd-metrics                            ClusterIP   10.98.0.98      <none>        8082/TCP                     66s
+service/argocd-notifications-controller-metrics   ClusterIP   10.100.10.228   <none>        9001/TCP                     66s
+service/argocd-redis                              ClusterIP   10.102.111.17   <none>        6379/TCP                     66s
+service/argocd-repo-server                        ClusterIP   10.96.68.54     <none>        8081/TCP,8084/TCP            66s
+service/argocd-server                             ClusterIP   10.108.95.38    <none>        80/TCP,443/TCP               66s
+service/argocd-server-metrics                     ClusterIP   10.108.98.84    <none>        8083/TCP                     66s
+
+NAME                                               READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/argocd-applicationset-controller   1/1     1            1           66s
+deployment.apps/argocd-dex-server                  1/1     1            1           66s
+deployment.apps/argocd-notifications-controller    1/1     1            1           66s
+deployment.apps/argocd-redis                       1/1     1            1           66s
+deployment.apps/argocd-repo-server                 1/1     1            1           66s
+deployment.apps/argocd-server                      1/1     1            1           66s
+
+NAME                                                          DESIRED   CURRENT   READY   AGE
+replicaset.apps/argocd-applicationset-controller-5b866bf4f7   1         1         1       66s
+replicaset.apps/argocd-dex-server-7b6987df7                   1         1         1       66s
+replicaset.apps/argocd-notifications-controller-5ddc4fdfb9    1         1         1       66s
+replicaset.apps/argocd-redis-ffccd77b9                        1         1         1       66s
+replicaset.apps/argocd-repo-server-55bb7b784                  1         1         1       66s
+replicaset.apps/argocd-server-7c746df554                      1         1         1       66s
+
+NAME                                             READY   AGE
+statefulset.apps/argocd-application-controller   1/1     66s
+ubuntu@k8s:~$ kubectl get svc -n argocd
+NAME                                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+argocd-applicationset-controller          ClusterIP   10.110.94.205   <none>        7000/TCP,8080/TCP            2m16s
+argocd-dex-server                         ClusterIP   10.102.26.37    <none>        5556/TCP,5557/TCP,5558/TCP   2m16s
+argocd-metrics                            ClusterIP   10.98.0.98      <none>        8082/TCP                     2m16s
+argocd-notifications-controller-metrics   ClusterIP   10.100.10.228   <none>        9001/TCP                     2m16s
+argocd-redis                              ClusterIP   10.102.111.17   <none>        6379/TCP                     2m16s
+argocd-repo-server                        ClusterIP   10.96.68.54     <none>        8081/TCP,8084/TCP            2m16s
+argocd-server                             ClusterIP   10.108.95.38    <none>        80/TCP,443/TCP               2m16s
+argocd-server-metrics                     ClusterIP   10.108.98.84    <none>        8083/TCP                     2m16s
+ubuntu@k8s:~$ kubectl expose service argocd-server --type=NodePort --name=argocd-server-nodeport --target-port=8080 -n argocd
+service/argocd-server-nodeport exposed
+ubuntu@k8s:~$ kubectl get svc -o wide -n argocd
+NAME                                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE     SELECTOR
+argocd-applicationset-controller          ClusterIP   10.110.94.205   <none>        7000/TCP,8080/TCP            7m57s   app.kubernetes.io/name=argocd-applicationset-controller
+argocd-dex-server                         ClusterIP   10.102.26.37    <none>        5556/TCP,5557/TCP,5558/TCP   7m57s   app.kubernetes.io/name=argocd-dex-server
+argocd-metrics                            ClusterIP   10.98.0.98      <none>        8082/TCP                     7m57s   app.kubernetes.io/name=argocd-application-controller
+argocd-notifications-controller-metrics   ClusterIP   10.100.10.228   <none>        9001/TCP                     7m57s   app.kubernetes.io/name=argocd-notifications-controller
+argocd-redis                              ClusterIP   10.102.111.17   <none>        6379/TCP                     7m57s   app.kubernetes.io/name=argocd-redis
+argocd-repo-server                        ClusterIP   10.96.68.54     <none>        8081/TCP,8084/TCP            7m57s   app.kubernetes.io/name=argocd-repo-server
+argocd-server                             ClusterIP   10.108.95.38    <none>        80/TCP,443/TCP               7m57s   app.kubernetes.io/name=argocd-server
+argocd-server-metrics                     ClusterIP   10.108.98.84    <none>        8083/TCP                     7m57s   app.kubernetes.io/name=argocd-server
+argocd-server-nodeport                    NodePort    10.101.212.9    <none>        80:30556/TCP,443:31081/TCP   92s     app.kubernetes.io/name=argocd-server
+ubuntu@k8s:~$ 
+
+Then use your kubeadm server IP with port number 30556.
+
+
+￼
+
+
+
+ubuntu@k8s:~$ kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath="{.data.password}" | base64 -d; echo
+CQDRgZb0S7xtrKO9
+ubuntu@k8s:~$
+
+Usr name: admin
+password: CQDRgZb0S7xtrKO9
+
+
+
+
+
+
+Maven:
+
+On new instance:
+
+sudo apt update
+sudo apt upgrade -y
+sudo apt install tree
+sudo apt install fontconfig openjdk-17-jre -y
+sudo find / -name java
+sudo vi /etc/profile
+### go to the end of the file and add below lines.
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+M2_HOME=/opt/maven
+PATH=$PATH:$HOME/bin:$JAVA_HOME/bin:$M2_HOME/bin
+export JAVA_HOME
+export M2_HOME
+export PATH
+
+sudo su -
+source /etc/environment
+echo $JAVA_HOME
+
+root@ip-172-31-9-248:~# echo $JAVA_HOME
+/usr/lib/jvm/java-17-openjdk-amd64
+root@ip-172-31-9-248:~# 
+
+cd /opt
+wget https://dlcdn.apache.org/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz
+tar -xvzf apache-maven-3.9.9-bin.tar.gz 
+ls
+mv apache-maven-3.9.9 maven
+rm apache-maven-3.9.9-bin.tar.gz 
+cd maven
+mvn —version
+
+
+The above steps completes have and Maven installation and configuration.
+
+Generate Sample JAVA project:
+mvn archetype:generate
+
+Choose a number or apply filter (format: [groupId:]artifactId, case sensitive contains): 2186: 
+Choose org.apache.maven.archetypes:maven-archetype-quickstart version: 
+1: 1.0-alpha-1
+2: 1.0-alpha-2
+3: 1.0-alpha-3
+4: 1.0-alpha-4
+5: 1.0
+6: 1.1
+7: 1.3
+8: 1.4
+9: 1.5
+Choose a number: 9: 
+Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetypes/maven-archetype-quickstart/1.5/maven-archetype-quickstart-1.5.jar
+Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/archetypes/maven-archetype-quickstart/1.5/maven-archetype-quickstart-1.5.jar (11 kB at 594 kB/s)
+[INFO] Using property: javaCompilerVersion = 17
+[INFO] Using property: junitVersion = 5.11.0
+Define value for property 'groupId': com.ravi
+Define value for property 'artifactId': my-webapp
+Define value for property 'version' 1.0-SNAPSHOT: 
+Define value for property 'package' com.ravi: 
+Confirm properties configuration:
+javaCompilerVersion: 17
+junitVersion: 5.11.0
+groupId: com.ravi
+artifactId: my-webapp
+version: 1.0-SNAPSHOT
+package: com.ravi
+ Y: y
+
+cd my-webapp
+tree .
+
+root@ip-172-31-9-248:~# ls -a
+.  ..  .bash_history  .bashrc  .m2  .profile  .ssh  .viminfo  my-webapp  snap
+root@ip-172-31-9-248:~# cd my-webapp
+root@ip-172-31-9-248:~/my-webapp# tree .
+.
+├── pom.xml
+└── src
+    ├── main
+    │   └── java
+    │       └── com
+    │           └── ravi
+    │               └── App.java
+    └── test
+        └── java
+            └── com
+                └── ravi
+                    └── AppTest.java
+
+10 directories, 3 files
+root@ip-172-31-9-248:~/my-webapp# 
+
+
+cat src/main/java/com/ravi/App.java 
+mvn validate
+mvn compile
+tree # it should give us additional class files. Output is available after the notes.
+mvn package  # this will create a jar file in /root/my-webapp/target/my-webapp-1.0-SNAPSHOT.jar
+mvn clean # it cleans the earlier created folder.
+mvn clean package  # we can use multiple goals within a single command.
+
+Maven Build Life Cycle:
+Validate - Validate the project is correct and all the folder structure is correctly configured or not, let's say we delete src/main folder structure, and then mvn validate, it will fail
+Compile - Compile the source code of the project, with this *.class files gets generated which would run on java virtual machine
+Test - Test the compiled source code using a suitable unit testing framework (It executes the unit test cases written and gives output whether they are correct or wrong )
+package - Take the compiled code and package it in its distributable format, such as JAR, WAR
+Clean - Clean the Projects unnecessary files (All the files and folders created under target folder will get deleted)
+Install - install the package into the local repository, for use as a dependency in other projects locally ( creates .m2 folder in users home directory and copied over jar file)
+Deploy - done in the build environment, copies the final package to the remote repository for sharing with other developers and projects
+Note : Whenever we execute a lifecyle of any phase (It runs all the previous phase as well, example when we run mvn package, inturn it does mon validate compile test and then package
+
+What is POM.xml : It is very important file in any maven project, POM stands for Project Object Model. POM is the fundamental unit of work in Maven.
+it is an XML file that contains information about the project and configuration details
+POM is used by Maven to build the Project
+All the dependencies and support plugins are defined in the POM file
+All dependencies resolved during the compilation, which mentioned in POM file
+
+root@ip-172-31-9-248:~/my-webapp# cat src/main/java/com/ravi/App.java 
+package com.ravi;
+
+/**
+ * Hello world!
+ */
+public class App {
+    public static void main(String[] args) {
+        System.out.println("Hello World!");
+    }
+}
+root@ip-172-31-9-248:~/my-webapp# cat src/test/java/com/ravi/AppTest.java 
+package com.ravi;
+
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.Test;
+
+/**
+ * Unit test for simple App.
+ */
+public class AppTest {
+
+    /**
+     * Rigorous Test :-)
+     */
+    @Test
+    public void shouldAnswerWithTrue() {
+        assertTrue(true);
+    }
+}
+root@ip-172-31-9-248:~/my-webapp# ls
+pom.xml  src
+root@ip-172-31-9-248:~/my-webapp# mvn validate
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------------< com.ravi:my-webapp >-------------------------
+[INFO] Building my-webapp 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  0.279 s
+[INFO] Finished at: 2024-09-27T17:31:50Z
+[INFO] ------------------------------------------------------------------------
+root@ip-172-31-9-248:~/my-webapp# mvn compile
+.
+.
+.
+
+root@ip-172-31-9-248:~/my-webapp# tree
+.
+├── pom.xml
+├── src
+│   ├── main
+│   │   └── java
+│   │       └── com
+│   │           └── ravi
+│   │               └── App.java
+│   └── test
+│       └── java
+│           └── com
+│               └── ravi
+│                   └── AppTest.java
+└── target
+    ├── classes
+    │   └── com
+    │       └── ravi
+    │           └── App.class
+    ├── generated-sources
+    │   └── annotations
+    └── maven-status
+        └── maven-compiler-plugin
+            └── compile
+                └── default-compile
+                    ├── createdFiles.lst
+                    └── inputFiles.lst
+
+20 directories, 6 files
+root@ip-172-31-9-248:~/my-webapp# mvn package
+
+[INFO] Building jar: /root/my-webapp/target/my-webapp-1.0-SNAPSHOT.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  8.901 s
+[INFO] Finished at: 2024-09-27T17:42:53Z
+[INFO] ------------------------------------------------------------------------
+root@ip-172-31-9-248:~/my-webapp# tree
+.
+├── pom.xml
+├── src
+│   ├── main
+│   │   └── java
+│   │       └── com
+│   │           └── ravi
+│   │               └── App.java
+│   └── test
+│       └── java
+│           └── com
+│               └── ravi
+│                   └── AppTest.java
+└── target
+    ├── classes
+    │   └── com
+    │       └── ravi
+    │           └── App.class
+    ├── generated-sources
+    │   └── annotations
+    ├── generated-test-sources
+    │   └── test-annotations
+    ├── maven-archiver
+    │   └── pom.properties
+    ├── maven-status
+    │   └── maven-compiler-plugin
+    │       ├── compile
+    │       │   └── default-compile
+    │       │       ├── createdFiles.lst
+    │       │       └── inputFiles.lst
+    │       └── testCompile
+    │           └── default-testCompile
+    │               ├── createdFiles.lst
+    │               └── inputFiles.lst
+    ├── my-webapp-1.0-SNAPSHOT.jar
+    ├── surefire-reports
+    │   ├── TEST-com.ravi.AppTest.xml
+    │   └── com.ravi.AppTest.txt
+    └── test-classes
+        └── com
+            └── ravi
+                └── AppTest.class
+
+29 directories, 13 files
+rroot@ip-172-31-9-248:~/my-webapp# mvn clean
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------------< com.ravi:my-webapp >-------------------------
+[INFO] Building my-webapp 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.4.0/maven-clean-plugin-3.4.0.pom
+Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.4.0/maven-clean-plugin-3.4.0.pom (5.5 kB at 10 kB/s)
+Downloading from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.4.0/maven-clean-plugin-3.4.0.jar
+Downloaded from central: https://repo.maven.apache.org/maven2/org/apache/maven/plugins/maven-clean-plugin/3.4.0/maven-clean-plugin-3.4.0.jar (36 kB at 524 kB/s)
+[INFO] 
+[INFO] --- clean:3.4.0:clean (default-clean) @ my-webapp ---
+[INFO] Deleting /root/my-webapp/target
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  1.732 s
+[INFO] Finished at: 2024-09-27T17:46:19Z
+[INFO] ------------------------------------------------------------------------
+root@ip-172-31-9-248:~/my-webapp# tree
+.
+├── pom.xml
+└── src
+    ├── main
+    │   └── java
+    │       └── com
+    │           └── ravi
+    │               └── App.java
+    └── test
+        └── java
+            └── com
+                └── ravi
+                    └── AppTest.java
+
+10 directories, 3 files
+root@ip-172-31-9-248:~/my-webapp# 
+root@ip-172-31-9-248:~/my-webapp# mvn install
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] -------------------------< com.ravi:my-webapp >-------------------------
+[INFO] Building my-webapp 1.0-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ my-webapp ---
+[INFO] skip non existing resourceDirectory /root/my-webapp/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.13.0:compile (default-compile) @ my-webapp ---
+[INFO] Nothing to compile - all classes are up to date.
+
+..
+
+[INFO] Installing /root/my-webapp/pom.xml to /root/.m2/repository/com/ravi/my-webapp/1.0-SNAPSHOT/my-webapp-1.0-SNAPSHOT.pom
+[INFO] Installing /root/my-webapp/target/my-webapp-1.0-SNAPSHOT.jar to /root/.m2/repository/com/ravi/my-webapp/1.0-SNAPSHOT/my-webapp-1.0-SNAPSHOT.jar
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  5.298 s
+[INFO] Finished at: 2024-09-27T17:50:30Z
+[INFO] ------------------------------------------------------------------------
+root@ip-172-31-9-248:~/my-webapp# ls ~/.m2
+repository
+root@ip-172-31-9-248:~/my-webapp# 
+
+Normally we must run all the mvn commands with in teh project folder which will be created with mvn compile. 
+NOTE: mvn install will create a local repository with int eh user home directory with .m2 file. In the above example it is created @ /root/.m2/repository/com/ravi/my-webapp/1.0-SNAPSHOT/my-webapp-1.0-SNAPSHOT.pom
+
+
+JENKINS: 
+
+• Jenkins is an open-source project written in Java that runs on Windows, macOS and other Unix-like O.S.
+• Jenkins Automates the entire software development Life cycle.
+• Jenkins achieves Continuous Integration with the help of plugins. Plugins allow the integration of Various DevOps stages
+• Jenkins came into the picture to address the challenges in software development, such as repetitive tasks, manual interventions, and inconsistent build and deployment processes.
+• As software projects grew in complexity, manual tasks like building, testing, and deploying code became time-consuming and error-prone
+• Jenkins emerged as an open-source solution that offered developers a way to automate tasks, integrate different tools, and establish continuous
+• integration and continuous delivery (CI/CD) pipelines.
+• This helped teams achieve faster development cycles, better collaboration, and more reliable software releases.
+• By incorporating Jenkins into the DevOps ecosystem, organizations can achieve faster, more reliable deployments, improve software quality, and realize cost savings through automation. Jenkins plays a pivotal role in transforming the deployment process, making it more efficient and aligned with modern DevOps practices.
+• There are few examples of CI/CD tools available as alternate to Jenkins, like GitLab, Circle Cl, Azure Pipelines,
+GitHub Actions
+Continuous Integration:
+Continuous integration is a procedure to integrate all the code changes done by several developers in one project. A code is repeatedly tested after a commit to guarantee the code is error and bug-free
+Continuous Deployment:
+Continuous Deployment aims at continuously releasing the code changes into the various environments (
+Prod/UAT/Staging/Dev)
+Continuous Deployment takes the automation further by automatically deploying every validated change to various enviornments without human intervention
+Continuous Delivery:
+Continuous Delivery focuses on automating the software release process to ensure that software changes can be delivered to production quickly and safely with manual intervention.
+Jenkins Installation:
+Make sure that java is already installed and configured. Then follow below steps:
+
+sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
+  https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]" \
+  https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+  /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt-get update
+sudo apt-get install jenkins -y
+systemctl status jenkins  # make sure that it is running and enabled. Otherwise follow the steps provided below.
+
+<public IP>: 8080
+
+
+￼
+
+Once you have given the password and follow the on screen instructions Jenkins will be ready for you.
+
+You can enable the Jenkins service to start at boot with the command:
+
+sudo systemctl enable jenkins
+
+You can start the Jenkins service with the command:
+
+sudo systemctl start jenkins
+
+You can check the status of the Jenkins service using the command:
+
+sudo systemctl status jenkins
+
+Ps-ef | grep - Jenkins - To check Jenkins process is running or not
+
+Isof -i:8080 - to check process which runs on port 8080
+
+By default, Jenkins will not be accessible to the external world due to the inbound traffic restriction by AWS. Open port
+
+8080 in the inbound traffic rules as show below.
+
+
+Terraform installation:
+
+sudo apt-get update && sudo apt-get install -y gnupg software-properties-common
+wget -O- https://apt.releases.hashicorp.com/gpg | \
+gpg --dearmor | \
+sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com $(lsb_release -cs) main" | \
+sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update
+sudo apt-get install terraform
+terraform -help plan
+
+
+
+
+
+
+jFrog:
+
+cd /opt/
+wget https://releases.jfrog.io/artifactory/bintray-artifactory/org/artifactory/oss/jfrog-artifactory-oss/7.21.5/jfrog-artifactory-oss-7.21.5-linux.tar.gz
+
+oss-7.21.5-linux.tar.gz
+tar -xvzf jfrog-artifactory-oss-7.21.5-linux.tar.gz
+cd artifactory-oss-7.21.5
+cd app/bin
+/artifactory.sh start
+BROWSE - http:/<Public |P>:8082
+Username/Password - admin/password
+
+
+Installation of SonarQube:
+
+Installing SonarQube on EC2
+Install Java:
+sudo apt update
+sudo apt install openjdk-17-jre -y
+Create SonarQube User:
+useradd -m sonar
+Download and Install SonarQube:
+cd /opt
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.6.0.92116.zip
+unzip sonarqube-10.6.0.92116.zip
+
+chown -R sonar:sonar sonarqube-10.6.0.92116
+su - sonar
+cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64
+/sonar.sh start
+Access SonarQube: Open http://<Public_IP>:9000 in your browser. Default login is admin/admin.
+
+
+Taking backup of Kubernetes:
+
+Taking a backup of a Kubernetes cluster involves multiple components because Kubernetes is a complex system that typically includes:
+	1	Cluster configuration: etcd database (which stores the entire cluster state).
+	2	Application data: Persistent volumes (PV) for applications that use persistent storage.
+	3	Application manifests: YAML definitions of your Kubernetes resources like Deployments, Services, ConfigMaps, etc.
+Here are the common methods to back up these components:
+1. Backing Up etcd
+etcd is the key-value store used by Kubernetes to store all its data. A backup of etcd is essential because it contains the cluster state.
+Manual etcd Backup
+If you have access to the etcd server:
+
+# Set etcd variables (you may need to customize these)
+ETCDCTL_API=3
+ETCD_ENDPOINTS="https://127.0.0.1:2379"
+ETCD_CERT="/etc/etcd/ssl/etcd.pem"
+ETCD_KEY="/etc/etcd/ssl/etcd-key.pem"
+ETCD_CACERT="/etc/etcd/ssl/ca.pem"
+
+# Take the backup
+etcdctl --endpoints="${ETCD_ENDPOINTS}" \
+        --cert="${ETCD_CERT}" \
+        --key="${ETCD_KEY}" \
+        --cacert="${ETCD_CACERT}" \
+        snapshot save /path/to/backup/etcd-snapshot.db
+
+	•	Restore: You can restore from the backup with:bash etcdctl snapshot restore /path/to/backup/etcd-snapshot.db
+
+Using kubectl and etcd Pod
+If etcd is running as a pod in your cluster (e.g., in managed clusters like AKS, EKS):
+# Get the etcd pod name
+kubectl -n kube-system get pods -l component=etcd
+
+# Execute the backup command inside the etcd pod
+kubectl -n kube-system exec -it etcd-POD_NAME -- etcdctl snapshot save /var/lib/etcd-backup/etcd-snapshot.db
+
+2. Backing Up Application Manifests
+You can back up all your Kubernetes manifests (Deployments, Services, ConfigMaps, etc.) using kubectl:
+# Backup all namespace resources to YAML files
+kubectl get all --all-namespaces -o yaml > cluster-backup.yaml
+
+# To backup specific resources like Deployments, ConfigMaps
+kubectl get deployments,services,configmaps --all-namespaces -o yaml > manifests-backup.yaml
+You can store these YAML files in a version control system like Git for easy retrieval.
+3. Backing Up Persistent Volumes (PV)
+For backing up persistent data (like databases), you usually need to:
+	•	Use a backup tool for the specific application (e.g., mysqldump for MySQL, pg_dump for PostgreSQL).
+	•	Use Kubernetes-native backup tools like Velero.
+Velero Backup
+Velero is a popular tool for Kubernetes cluster backup and recovery. It can back up cluster state and persistent volumes.
+	1	Install Velero: velero install --provider <CLOUD_PROVIDER> --bucket <BUCKET_NAME> --backup-location-config <CONFIG>
+ 2		Create a Backup: velero backup create my-backup --include-namespaces my-namespace
+ 3		Restore from Backup: velero restore create --from-backup my-backup
+4. Automating Backups
+For production environments, you can schedule backups using a cron job or use CI/CD tools like GitHub Actions or GitLab CI to automate the backup process.
+Best Practices
+	•	Regularly test your backups by restoring them in a test environment.
+	•	Use encryption for your backups, especially if they contain sensitive information.
+	•	Store backups in multiple locations (e.g., cloud storage, on-premises storage).
+Tools for Kubernetes Backup
+Apart from Velero, some other popular tools are:
+	•	Kasten K10: Comprehensive backup and disaster recovery for Kubernetes.
+	•	Rancher Longhorn: Provides backup for persistent volumes in Kubernetes.
+	•	TrilioVault: Enterprise-grade Kubernetes backup solution.
+
+Upgrading Kubernetes:
+Upgrading the control plane in a Kubernetes cluster involves updating key components like:
+	•	etcd: The distributed key-value store that holds the cluster state.
+	•	API server: The central management interface of Kubernetes.
+	•	Controller manager: Manages the controllers that regulate the cluster's state.
+	•	Scheduler: Determines which nodes should run unscheduled pods.
+Here's a step-by-step guide to perform the upgrade:
+Prerequisites
+	1.	Backup the etcd Database: Ensure you have a backup of the etcd data as it contains the cluster's entire state.bash etcdctl snapshot save /path/to/backup/etcd-snapshot.db
+	2.	Check Cluster Health: kubectl get nodes
+		kubectl get pods --all-namespaces
+	3.	Validate Cluster Compatibility: Check the Kubernetes version compatibility in the Kubernetes version skew policy.
+
+Upgrade Steps
+Step 1: Prepare for the Upgrade
+	•	Identify the current and target versions of Kubernetes:bash kubectl version --short
+	•	Drain the control plane node (if it's not a highly available multi-master setup):bash kubectl drain <control-plane-node> --ignore-daemonsets --delete-emptydir-data 
+Step 2: Upgrade kubeadm
+Upgrade kubeadm on the control plane node. It is the tool that performs the upgrade.
+# Upgrade kubeadm to the target version
+sudo apt-get update && sudo apt-get install -y kubeadm=1.28.x-00
+Verify the upgrade plan:
+kubeadm upgrade plan
+
+Step 3: Upgrade the Control Plane Components
+Start the control plane upgrade process:
+# Apply the upgrade
+sudo kubeadm upgrade apply v1.28.x
+This command updates the etcd, API server, controller manager, and scheduler.
+Step 4: Upgrade kubelet and kubectl
+# Upgrade kubelet and kubectl
+sudo apt-get install -y kubelet=1.28.x-00 kubectl=1.28.x-00
+
+# Restart kubelet
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+Step 5: Uncordon the Control Plane Node
+Bring the control plane node back into the cluster:
+kubectl uncordon <control-plane-node>
+
+Step 6: Verify the Upgrade
+Check the status of the control plane components and the version:
+# Check the Kubernetes version
+kubectl version --short
+
+# Verify the health of the control plane components
+kubectl get componentstatuses
+kubectl get nodes
+
+Additional Steps for Highly Available Clusters
+If you have multiple control plane nodes (HA setup), follow these steps for each node:
+	1	Upgrade kubeadm on the node.
+	2	Run kubeadm upgrade node to update the local node configuration.
+	3	Upgrade kubelet and restart it.
+Best Practices
+	•	Test in a Staging Environment: Always test the upgrade in a non-production environment first.
+	•	Monitor the Cluster: Use monitoring tools like Prometheus, Grafana, or Datadog to track cluster health during the upgrade.
+	•	Review Release Notes: Check the Kubernetes release notes for any breaking changes.
+
+Using Automation Tools
+For larger clusters or frequent upgrades, consider using automation tools like:
+	•	kOps: Manages Kubernetes upgrades for AWS-based clusters.
+	•	Rancher: Provides a UI for managing Kubernetes upgrades.
+	•	Cluster API (CAPI): Automates Kubernetes upgrades as part of GitOps workflows.
+
+
+RBAC:
+
+Configuring Role-Based Access Control (RBAC) in Kubernetes allows you to define permissions for users, groups, or service accounts to interact with the cluster resources. RBAC uses Roles, ClusterRoles, RoleBindings, and ClusterRoleBindings.
+1. Prerequisites
+	•	Ensure RBAC is enabled in your Kubernetes cluster. Most modern Kubernetes distributions have it enabled by default. To verify:bash kubectl api-versions | grep rbac.authorization.k8s.io
+	•	If the output includes rbac.authorization.k8s.io, RBAC is enabled.
+
+2. RBAC Components
+	•	Role: Defines permissions (rules) within a specific namespace.
+	•	ClusterRole: Defines permissions at the cluster level or across all namespaces.
+	•	RoleBinding: Assigns a Role to a user, group, or service account within a specific namespace.
+	•	ClusterRoleBinding: Assigns a ClusterRole to a user, group, or service account at the cluster level.
+
+3. Example Configuration
+Scenario:
+You want to grant a user named developer read-only access to all resources in the dev namespace.
+Step 1: Create a Role
+Define a Role with read permissions in the dev namespace.
+# read-only-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: dev
+  name: read-only-role
+rules:
+  - apiGroups: [""]                   # "" indicates the core API group
+    resources: ["pods", "services"]   # Resources you want to allow access to
+    verbs: ["get", "list", "watch"]   # Actions you want to allow
+
+Apply the Role:
+kubectl apply -f read-only-role.yaml
+Step 2: Create a RoleBinding
+Assign the read-only-role to a user or service account named developer.
+# read-only-rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-only-binding
+  namespace: dev
+subjects:
+  - kind: User
+    name: developer                # The user you are binding the role to
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: read-only-role             # The Role you created in Step 1
+  apiGroup: rbac.authorization.k8s.io
+
+Apply the RoleBinding:
+kubectl apply -f read-only-rolebinding.yaml
+
+Step 3: Verify Access
+To test if the developer user has read-only access, you can use kubectl auth can-i:
+kubectl auth can-i list pods --namespace=dev --as=developer
+
+If the RBAC rules are configured correctly, the command should return yes for allowed actions like get, list, watch and no for actions like create, delete.
+4. Using ClusterRoles and ClusterRoleBindings
+If you want to create permissions that apply to the entire cluster or across multiple namespaces, use ClusterRole and ClusterRoleBinding.
+Example: Grant read access to all namespaces:
+yaml
+Copy code
+# read-all-clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: read-all
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "list", "watch"]
+Create a ClusterRoleBinding for this ClusterRole:
+# read-all-clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: read-all-binding
+subjects:
+  - kind: User
+    name: developer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: read-all
+  apiGroup: rbac.authorization.k8s.io
+
+Apply the configurations:
+kubectl apply -f read-all-clusterrole.yaml
+kubectl apply -f read-all-clusterrolebinding.yaml
+
+5. Listing and Deleting Roles and Bindings
+	•	List all Roles in a namespace:bash kubectl get roles -n <namespace>
+	•	
+	•	List all ClusterRoles:bash kubectl get clusterroles
+
+	•	Delete a RoleBinding:bash kubectl delete rolebinding read-only-binding -n dev 
+6. Common Use Cases
+	•	Admin Access: Grant full access to a namespace.
+	•	Read-Only Access: Allow read-only access to certain resources in a namespace.
+	•	Service Account Access: Use RoleBindings with service accounts for specific workloads like CI/CD pipelines.
+Example: Grant admin access to a service account:
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: admin-binding
+  namespace: dev
+subjects:
+  - kind: ServiceAccount
+    name: ci-cd-service-account
+    namespace: dev
+roleRef:
+  kind: Role
+  name: admin
+  apiGroup: rbac.authorization.k8s.io
+Best Practices
+	•	Use Roles and RoleBindings for namespace-specific access and ClusterRoles and ClusterRoleBindings for cluster-wide permissions.
+	•	Implement the Principle of Least Privilege: Grant only the necessary permissions needed for users or applications.
+	•	Regularly audit and review your RBAC policies using tools like Kubectl RBAC Viewer.
+
+
++++++
+
+
+Kubernetes RBAC (Role-Based Access Control)
+Role-Based Access Control (RBAC) in Kubernetes is a mechanism for managing authorization, defining who can do what within a cluster. It allows administrators to control access to Kubernetes resources at a granular level based on roles assigned to users, groups, or service accounts.
+
+Key RBAC Concepts
+	1	Subjects:
+	◦	Entities (users, groups, or service accounts) that require access to Kubernetes resources.
+	◦	Types of subjects:
+	▪	User: An individual person or a system interacting with the cluster.
+	▪	Group: A collection of users.
+	▪	Service Account: A special account used by pods to interact with the cluster.
+	2	Roles and ClusterRoles:
+	◦	Define a set of permissions (rules) to access Kubernetes resources.
+	◦	Role: Namespaced, limited to resources within a specific namespace.
+	◦	ClusterRole: Non-namespaced, can provide access to resources across all namespaces or cluster-wide resources (e.g., nodes, persistent volumes).
+	3	RoleBindings and ClusterRoleBindings:
+	◦	Associate a role with a subject, granting the subject the permissions defined in the role.
+	◦	RoleBinding: Grants a Role’s permissions within a specific namespace.
+	◦	ClusterRoleBinding: Grants a ClusterRole’s permissions across the entire cluster.
+
+How RBAC Works
+RBAC policies define rules that specify:
+	1	What actions (verbs like get, list, create) a subject can perform.
+	2	On which resources (e.g., pods, services, nodes).
+	3	In which scope (specific namespace or cluster-wide).
+When a user, group, or service account makes a request, the Kubernetes API server checks RBAC rules to determine if the request is allowed.
+
+RBAC Configuration Example
+Scenario:
+You want to grant a user named developer read-only access to all resources in the dev namespace.
+
+Step 1: Create a Role
+Define a Role with read-only permissions in the dev namespace.
+yaml
+Copy code
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: dev
+  name: read-only-role
+rules:
+  - apiGroups: [""]                   # "" refers to the core API group
+    resources: ["pods", "services"]   # Specify the resources
+    verbs: ["get", "list", "watch"]   # Specify the allowed actions
+Apply the Role:
+bash
+Copy code
+kubectl apply -f read-only-role.yaml
+
+Step 2: Create a RoleBinding
+Bind the read-only-role to the developer user in the dev namespace.
+yaml
+Copy code
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-only-binding
+  namespace: dev
+subjects:
+  - kind: User
+    name: developer                # The user to bind the role to
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: read-only-role             # Reference the Role created in Step 1
+  apiGroup: rbac.authorization.k8s.io
+Apply the RoleBinding:
+bash
+Copy code
+kubectl apply -f read-only-rolebinding.yaml
+
+RBAC at the Cluster Level
+For cluster-wide access or non-namespaced resources, use ClusterRoles and ClusterRoleBindings.
+Example: ClusterRole for Read Access
+yaml
+Copy code
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-read-only
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes", "services"]
+    verbs: ["get", "list", "watch"]
+ClusterRoleBinding Example
+yaml
+Copy code
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-read-binding
+subjects:
+  - kind: User
+    name: developer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-read-only
+  apiGroup: rbac.authorization.k8s.io
+
+Key Benefits of RBAC
+	1	Fine-Grained Access Control: Allows detailed permission settings for different roles and resources.
+	2	Security: Limits user permissions based on the principle of least privilege.
+	3	Scalability: Works seamlessly across large clusters with multiple users, groups, and applications.
+	4	Namespace Isolation: Separate permissions for different namespaces.
+
+Best Practices
+	1	Principle of Least Privilege:
+	◦	Grant users and applications only the permissions they need.
+	2	Use Namespaced Roles When Possible:
+	◦	Use Role and RoleBinding instead of ClusterRole and ClusterRoleBinding unless cluster-wide access is required.
+	3	Regular Audits:
+	◦	Periodically review RBAC configurations to ensure compliance with security policies.
+	4	Service Accounts for Pods:
+	◦	Use dedicated service accounts for workloads rather than the default service account.
+	5	Avoid Using Cluster Admin Privileges:
+	◦	Restrict usage of the cluster-admin ClusterRole to critical users only.
+
+Commands to Verify RBAC
+	1	List Roles:bash Copy code   kubectl get roles -n <namespace>
+	2	  
+	3	List RoleBindings:bash Copy code   kubectl get rolebindings -n <namespace>
+	4	  
+	5	Check Access for a User:bash Copy code   kubectl auth can-i <verb> <resource> --namespace=<namespace> --as=<user>
+	6	  
+For example:
+bash
+Copy code
+kubectl auth can-i get pods --namespace=dev --as=developer
+
+
+
+
+Drawbacks advantages and errors of each tool: Kubernetes, Dockers and Jenkins 
+Diff between Docker -swarm - K8s
+Different networks in k8s
+HTTP Erros codes:
+Sonarqube: pipeline
+Deployment patterns: Blue green
+Ansible.. playbook
+
+
+
+
+
+
