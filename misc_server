@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# Update system and install essential utilities
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y tree unzip putty-tools fontconfig gnupg software-properties-common wget curl
+
+# Java Installation
+echo "Installing Java and Maven..."
+
+sudo apt install -y openjdk-17-jre
+sudo find / -name java
+
+# Install Maven
+sudo cd /opt
+sudo wget https://dlcdn.apache.org/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz
+sudo tar -xvzf apache-maven-3.9.9-bin.tar.gz
+sudo mv apache-maven-3.9.9 maven
+sudo rm apache-maven-3.9.9-bin.tar.gz
+sudo cd maven
+
+
+# Set JAVA_HOME environment variable
+echo "Setting JAVA_HOME and Maven Environment..."
+
+echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" | sudo tee -a /etc/profile
+echo "M2_HOME=/opt/maven" | sudo tee -a /etc/profile
+echo "PATH=\$PATH:\$HOME/bin:\$JAVA_HOME/bin:\$M2_HOME/bin" | sudo tee -a /etc/profile
+echo "export JAVA_HOME" | sudo tee -a /etc/profile
+echo "export M2_HOME" | sudo tee -a /etc/profile
+echo "export PATH" | sudo tee -a /etc/profile
+
+source /etc/profile
+mvn --version
+java --version
+
+
+# Jenkins Installation
+echo "Installing Jenkins..."
+
+sudo wget -O /usr/share/keyrings/jenkins-keyring.asc https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/" | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y jenkins 
+jenkins --versions
+
+# Terraform Installation
+echo "Installing Terraform..."
+
+wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg > /dev/null
+echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+sudo apt update
+sudo apt-get install -y terraform
+terraform -help
+
+# SonarQube Installation
+echo "Setting up SonarQube..."
+
+useradd -m sonar -s /bin/bash
+cd /opt
+wget https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-10.6.0.92116.zip
+unzip sonarqube-10.6.0.92116.zip
+rm -rf sonarqube-10.6.0.92116.zip
+chown -R sonar:sonar sonarqube-10.6.0.92116
+
+# Start SonarQube as sonar user
+su - sonar -c "cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64 && ./sonar.sh start"
+su - sonar -c "cd /opt/sonarqube-10.6.0.92116/bin/linux-x86-64 && ./sonar.sh status"
+
+# Docker and AWS CLI Installation
+echo "Installing Docker and AWS CLI..."
+
+sudo apt-get install -y docker.io
+sudo usermod -aG docker jenkins
+sudo systemctl restart docker
+docker --version
+sudo chmod 666 /var/run/docker.sock
+
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip
+sudo ./aws/install
+aws --version
+
+# JFrog Artifactory Installation
+echo "Installing JFrog Artifactory..."
+
+cd /opt
+wget https://releases.jfrog.io/artifactory/bintray-artifactory/org/artifactory/oss/jfrog-artifactory-oss/7.90.8/jfrog-artifactory-oss-7.90.8-linux.tar.gz
+tar -xvzf jfrog-artifactory-oss-7.90.8-linux.tar.gz
+cd artifactory-oss-7.90.8/app/bin
+./artifactory.sh start
+
+echo "Setup Completed Successfully!"
+
+#installed with versions
+echo "installed with versions"
+mvn --version
+java --version
+sudo jenkins --version
+terraform version
+sudo -u sonar /opt/sonarqube-10.6.0.92116/bin/linux-x86-64/sonar.sh status
+docker --version
+aws --version
+/opt/artifactory-oss-7.90.8/app/bin/artifactory.sh status
